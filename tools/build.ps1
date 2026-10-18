@@ -17,6 +17,7 @@ py -m PyInstaller --noconfirm --clean --windowed --uac-admin `
     --icon build\icon.ico `
     --add-data "static;static" `
     --hidden-import pystray._win32 `
+    --collect-data soundcard `
     app.py
 if ($LASTEXITCODE -ne 0) { throw "Сборка PyInstaller не удалась" }
 

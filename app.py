@@ -38,6 +38,7 @@ DEFAULT_SETTINGS = {
     "brightness": 100,
     "startup_profile": "",
     "zone_sizes": {},  # device name -> {zone name: LED count} for addressable headers
+    "monitor": 1,
 }
 
 
@@ -60,6 +61,7 @@ state = {"backend": DemoBackend(), "phase": "starting", "error": None, "version"
 runtime = rt.OpenRGBRuntime(settings["host"], settings["port"], DATA / "engine")
 
 engine = EffectEngine(lambda: state["backend"], lambda: settings["brightness"])
+engine.sources["screen"].monitor = settings.get("monitor", 1)
 app = Flask(__name__, static_folder=str(RES / "static"), static_url_path="/static")
 
 
@@ -149,57 +151,98 @@ def status():
         "error": state["error"] or engine.last_error,
         "version": state["version"],
         "engine": runtime.info(),
+        "sources": engine.source_errors(),
     }
 
 
-def targets_from(body):
-    ids = body.get("targets")
+def parse_key(key):
+    """'3' -> (3, None), '3:1' -> (3, 1); validated against current devices."""
+    dev, _, zone = str(key).partition(":")
+    dev = int(dev)
     devices = state["backend"].devices
+    if not 0 <= dev < len(devices):
+        raise ValueError(f"Нет устройства {dev}")
+    if zone != "":
+        zone = int(zone)
+        if not 0 <= zone < len(devices[dev]["zones"]):
+            raise ValueError(f"Нет зоны {zone}")
+        return dev, zone
+    return dev, None
+
+
+def targets_from(body):
+    """Target keys from a request: list of 'dev' / 'dev:zone' (ints accepted), or all devices."""
+    ids = body.get("targets")
     if ids in (None, "all"):
-        return [d["id"] for d in devices]
-    return [i for i in ids if 0 <= i < len(devices)]
+        return [str(d["id"]) for d in state["backend"].devices]
+    out = []
+    for key in ids:
+        try:
+            parse_key(key)
+            out.append(str(key))
+        except (ValueError, TypeError):
+            pass
+    return out
+
+
+def devices_of(keys):
+    return sorted({int(str(k).split(":")[0]) for k in keys})
 
 
 def effect_cfg(body):
     effect = body.get("effect", "static")
     if effect not in EFFECTS:
         raise ValueError("Неизвестный эффект")
-    return {
+    cfg = {
         "effect": effect,
         "colors": body.get("colors") or ["#ffffff"],
         "speed": int(body.get("speed", 50)),
         "brightness": int(body.get("brightness", 100)),
         "reverse": bool(body.get("reverse", False)),
     }
+    region = body.get("region")
+    if isinstance(region, dict):
+        cfg["region"] = {k: region[k] for k in ("x", "y", "w", "h", "mode", "reverse") if k in region}
+    return cfg
 
 
 def snapshot_by_name():
-    """Current lighting keyed by device name (ids can change between sessions)."""
+    """Current lighting keyed by device name and 'device::zone' (ids can change between sessions)."""
     out = {}
     for d in state["backend"].devices:
-        cfg = engine.assignments.get(d["id"])
+        cfg = engine.assignments.get(str(d["id"]))
         if cfg:
             out[d["name"]] = {"kind": "effect", **cfg}
-        else:
+        elif not any(k.startswith(f'{d["id"]}:') for k in engine.assignments):
             out[d["name"]] = {"kind": "hardware", "mode": d["active_mode"]}
+        for zi, z in enumerate(d["zones"]):
+            zcfg = engine.assignments.get(f'{d["id"]}:{zi}')
+            if zcfg:
+                out[f'{d["name"]}::{z["name"]}'] = {"kind": "effect", **zcfg}
     return out
 
 
 def apply_profile(data):
     backend = state["backend"]
-    by_name = {d["name"]: d["id"] for d in backend.devices}
-    for name, cfg in data.get("devices", {}).items():
-        dev_id = by_name.get(name)
-        if dev_id is None:
+    by_name = {d["name"]: d for d in backend.devices}
+    items = sorted(data.get("devices", {}).items(), key=lambda kv: "::" in kv[0])  # devices before zones
+    for name, cfg in items:
+        dev_name, _, zone_name = name.partition("::")
+        dev = by_name.get(dev_name)
+        if dev is None:
             continue
-        if cfg.get("kind") == "hardware":
-            engine.release(dev_id)
+        if zone_name:
+            zi = next((i for i, z in enumerate(dev["zones"]) if z["name"] == zone_name), None)
+            if zi is not None:
+                engine.assign(f'{dev["id"]}:{zi}', effect_cfg(cfg))
+        elif cfg.get("kind") == "hardware":
+            engine.release(dev["id"])
             try:
-                backend.set_hardware_mode(dev_id, cfg["mode"])
+                backend.set_hardware_mode(dev["id"], cfg["mode"])
             except Exception:
                 pass
         else:
-            engine.assign(dev_id, effect_cfg(cfg))
+            engine.assign(str(dev["id"]), effect_cfg(cfg))
 
 
 # ---------- autostart (Task Scheduler, so it starts elevated without a UAC prompt) ----------
@@ -245,8 +288,9 @@ def api_state():
     return jsonify({
         "status": status(),
         "devices": [] if state["phase"] == "starting" else state["backend"].describe(),
-        "assignments": {str(k): v for k, v in engine.assignments.items()},
-        "effects": [{"id": k, "title": v[0], "colors": v[1], "animated": v[2]} for k, v in EFFECTS.items()],
+        "assignments": dict(engine.assignments),
+        "effects": [{"id": k, "title": v[0], "group": v[1], "colors": v[2], "animated": v[3],
+                     "source": v[4], "slider": v[5]} for k, v in EFFECTS.items()],
         "settings": settings,
         "profiles": sorted(profiles),
     })
@@ -270,9 +314,9 @@ def api_apply():
         cfg = effect_cfg(body)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    for dev_id in targets_from(body):
-        engine.assign(dev_id, dict(cfg))
-    return jsonify({"ok": True})
+    for key in targets_from(body):
+        engine.assign(key, dict(cfg))
+    return jsonify({"ok": True, "assignments": dict(engine.assignments)})
 
 
 @app.post("/api/hardware")
@@ -282,13 +326,94 @@ def api_hardware():
     color = body.get("color")
     color = tuple(int(color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) if color else None
     errors = []
-    for dev_id in targets_from(body):
+    for dev_id in devices_of(targets_from(body)):
         engine.release(dev_id)
         try:
             backend.set_hardware_mode(dev_id, body["mode"], color, body.get("speed"))
         except Exception as exc:
             errors.append(f'{backend.devices[dev_id]["name"]}: {exc}')
     return jsonify({"ok": not errors, "errors": errors})
+
+
+# ---------- LED count finder: light the first N LEDs of a header so the user sees where it ends
+
+count_test = {}  # "dev:zone" -> original size
+
+
+@app.post("/api/zone/test")
+def api_zone_test():
+    body = request.get_json(force=True)
+    backend = state["backend"]
+    try:
+        dev_id, zi = parse_key(f'{body["device"]}:{body["zone"]}')
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    key = f"{dev_id}:{zi}"
+    zone = backend.devices[dev_id]["zones"][zi]
+    count = max(1, int(body.get("count", 1)))
+    if key not in count_test:
+        count_test[key] = zone["leds"]
+        if hasattr(backend, "resize_zone") and zone.get("resizable"):
+            backend.resize_zone(dev_id, zi, min(zone["max"], max(300, count)))  # address every LED present
+            state["version"] += 1
+    engine.set_override(key, {"effect": "count_test", "count": count, "brightness": 100})
+    return jsonify({"ok": True})
+
+
+@app.post("/api/zone/test/stop")
+def api_zone_test_stop():
+    body = request.get_json(force=True)
+    backend = state["backend"]
+    key = f'{int(body["device"])}:{int(body["zone"])}'
+    engine.set_override(key, None)
+    original = count_test.pop(key, None)
+    dev_id, zi = parse_key(key)
+    dev = backend.devices[dev_id]
+    size = body.get("save")
+    if hasattr(backend, "resize_zone"):
+        if size is not None:
+            size = backend.resize_zone(dev_id, zi, int(size))
+            settings["zone_sizes"].setdefault(dev["name"], {})[dev["zones"][zi]["name"]] = size
+            save_json(SETTINGS_FILE, settings)
+        elif original is not None:
+            backend.resize_zone(dev_id, zi, original)
+    engine.mark_all_dirty()
+    state["version"] += 1
+    return jsonify({"ok": True, "size": size})
+
+
+# ---------- screen mode helpers
+
+@app.get("/api/screen/grid")
+def api_screen_grid():
+    """Small live picture of the screen for the layout editor (starts capture if needed)."""
+    screen = engine.sources["screen"]
+    screen.start()
+    state["screen_preview_until"] = time.monotonic() + 5
+    g = screen.grid
+    return jsonify({"w": g.shape[1], "h": g.shape[0],
+                    "cells": [rgb_to_hex(c) for row in g for c in row],
+                    "monitor": screen.monitor, "monitors": screen.list_monitors(),
+                    "error": screen.error})
+
+
+@app.post("/api/screen/monitor")
+def api_screen_monitor():
+    engine.sources["screen"].monitor = max(1, int(request.get_json(force=True).get("monitor", 1)))
+    settings["monitor"] = engine.sources["screen"].monitor
+    save_json(SETTINGS_FILE, settings)
+    return jsonify({"ok": True})
+
+
+def stop_idle_preview():
+    """The editor keeps capture alive by polling; stop it once nobody looks and no effect needs it."""
+    while True:
+        time.sleep(2)
+        until = state.get("screen_preview_until")
+        if until and time.monotonic() > until:
+            state["screen_preview_until"] = None
+            if not any(c["effect"] == "screen" for c in engine.assignments.values()):
+                engine.sources["screen"].stop()
 
 
 @app.post("/api/connect")
@@ -564,6 +689,7 @@ def main():
     else:
         threading.Thread(target=connect_openrgb, daemon=True).start()
 
+    threading.Thread(target=stop_idle_preview, daemon=True).start()
     server = threading.Thread(target=httpd.serve_forever, daemon=True)
     server.start()
     print(f"RGB Studio: http://127.0.0.1:{args.port}")

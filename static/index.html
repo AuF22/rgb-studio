@@ -71,7 +71,8 @@
       </div>
 
       <div class="tab-body" id="tab-effects">
-        <div class="effect-grid" id="effectGrid"></div>
+        <div id="effectGrid"></div>
+        <div class="effect-extra" id="effectExtra"></div>
 
         <div class="control-row" id="colorRow">
           <div class="control-label">Цвета</div>
@@ -80,11 +81,12 @@
             <button class="chip-add" id="addColor" title="Добавить цвет">+</button>
           </div>
           <div class="swatches" id="swatches"></div>
+          <div class="color-hint" id="colorHint"></div>
         </div>
 
         <div class="sliders">
           <label class="slider" id="speedRow">
-            <span class="control-label">Скорость <b id="speedVal">50</b></span>
+            <span class="control-label"><span id="speedLabel">Скорость</span> <b id="speedVal">50</b></span>
             <input type="range" id="speed" min="0" max="100" value="50">
           </label>
           <label class="slider">
@@ -159,6 +161,53 @@
       отдельно ничего устанавливать не нужно. Закрытие окна не выключает подсветку: приложение продолжает
       работать в трее, выйти можно через значок у часов.</p>
     </section>
+  </form>
+</dialog>
+
+<dialog id="countDlg">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head">
+      <h2 id="countTitle">Сколько светодиодов?</h2>
+      <button class="icon-btn" value="cancel" title="Закрыть">✕</button>
+    </div>
+    <p class="muted">Светодиоды ARGB не сообщают, сколько их подключено, поэтому подберём на глаз.
+      Двигайте ползунок, пока <b>красный</b> огонёк не окажется на <b>последнем</b> светодиоде вентилятора или ленты.
+      Если вентиляторы соединены цепочкой — до конца последнего.</p>
+    <div class="count-big"><button type="button" class="icon-btn" id="countMinus">−</button>
+      <span id="countValue">20</span><button type="button" class="icon-btn" id="countPlus">+</button></div>
+    <input type="range" id="countRange" min="1" max="300" value="20">
+    <div class="btn-row">
+      <button type="button" class="btn primary" id="countSave">Сохранить</button>
+      <button type="button" class="btn ghost" id="countCancel">Отмена</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="screenDlg" class="wide-dlg">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head">
+      <h2>Области экрана</h2>
+      <button class="icon-btn" value="close" title="Закрыть">✕</button>
+    </div>
+    <p class="muted">Выберите устройство или зону справа и обведите мышкой часть экрана, цвет которой оно будет повторять.</p>
+    <div class="screen-wrap">
+      <div class="screen-box">
+        <canvas id="screenCanvas" width="640" height="360"></canvas>
+        <select id="monitorSelect" title="Монитор"></select>
+      </div>
+      <div class="screen-side">
+        <div class="screen-targets" id="screenTargets"></div>
+        <div class="preset-row" id="presetRow"></div>
+        <label class="field"><span>Как раскладывать цвета</span>
+          <select id="regionMode">
+            <option value="avg">Средний цвет области</option>
+            <option value="h">Слева направо</option>
+            <option value="v">Сверху вниз</option>
+          </select>
+        </label>
+        <label class="toggle"><input type="checkbox" id="regionReverse"><span class="switch"></span> В обратную сторону</label>
+      </div>
+    </div>
   </form>
 </dialog>
 
