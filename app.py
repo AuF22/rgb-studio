@@ -29,6 +29,8 @@ DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
 PROFILES_FILE = DATA / "profiles.json"
 TASK_NAME = "RGB Studio"
+PORT_SPAN = 20  # ports tried after the default one
+DEFAULT_HEADER_LEDS = 40
 
 DEFAULT_SETTINGS = {
     "host": "127.0.0.1",
@@ -126,6 +128,10 @@ def apply_zone_sizes():
         wanted = settings["zone_sizes"].get(dev["name"], {})
         for idx, zone in enumerate(dev["zones"]):
             size = wanted.get(zone["name"])
+            if size is None and zone["resizable"] and zone["leds"] == 0:
+                # unconfigured addressable header: guess generously so attached fans/strips light up;
+                # LEDs beyond what is physically connected are simply ignored by the controller
+                size = min(DEFAULT_HEADER_LEDS, zone["max"])
             if zone["resizable"] and size is not None and size != zone["leds"]:
                 try:
                     backend.resize_zone(dev["id"], idx, size)
@@ -477,6 +483,54 @@ def already_running(port):
         return False
 
 
+INSTANCE_FILE = DATA / "instance.json"
+
+
+def find_running(base):
+    """Port of a live RGB Studio instance, if any. Probing closed ports is slow on Windows,
+    so only the default port and the one the last instance recorded are checked."""
+    recorded = load_json(INSTANCE_FILE, {}).get("port")
+    for port in dict.fromkeys(p for p in (recorded, base) if p):
+        if already_running(port):
+            return port
+    return None
+
+
+def bind_server(base):
+    """Bind exclusively to the first free port from base. Windows otherwise lets a second process
+    share a port, and requests then randomly land in a stale copy of the app (404s)."""
+    import socket
+    from werkzeug.serving import BaseWSGIServer, make_server
+
+    if not getattr(BaseWSGIServer, "_rgbstudio_exclusive", False):
+        original = BaseWSGIServer.server_bind
+
+        def server_bind(self):
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            original(self)
+
+        BaseWSGIServer.allow_reuse_address = False
+        BaseWSGIServer.server_bind = server_bind
+        BaseWSGIServer._rgbstudio_exclusive = True
+
+    for port in range(base, base + PORT_SPAN):
+        probe = socket.socket()
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        finally:
+            probe.close()
+        try:  # werkzeug exits the process instead of raising when the port is taken
+            return make_server("127.0.0.1", port, app, threaded=True), port
+        except (OSError, SystemExit):
+            continue
+    raise SystemExit(f"Нет свободного порта в диапазоне {base}-{base + PORT_SPAN - 1}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="RGB Studio")
     parser.add_argument("--port", type=int, default=6750)
@@ -485,25 +539,32 @@ def main():
     parser.add_argument("--demo", action="store_true", help="виртуальные устройства, без движка")
     parser.add_argument("--restarted", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    state["port"] = args.port
 
-    if args.restarted:  # give the previous instance time to release its ports
+    if args.restarted:  # give the previous instance time to shut down
         for _ in range(40):
-            if not already_running(args.port):
+            if find_running(args.port) is None:
                 break
             time.sleep(0.25)
 
-    if already_running(args.port):
-        open_window()
+    running = find_running(args.port)
+    if running is not None:
+        state["port"] = running
+        if args.no_window:
+            print(f"RGB Studio уже запущена: http://127.0.0.1:{running}")
+        else:
+            open_window()
         return
+
+    httpd, state["port"] = bind_server(args.port)
+    args.port = state["port"]
+    save_json(INSTANCE_FILE, {"port": args.port, "pid": os.getpid()})
 
     if args.demo:
         state["phase"] = "demo"
     else:
         threading.Thread(target=connect_openrgb, daemon=True).start()
 
-    server = threading.Thread(target=lambda: app.run(host="127.0.0.1", port=args.port, threaded=True),
-                              daemon=True)
+    server = threading.Thread(target=httpd.serve_forever, daemon=True)
     server.start()
     print(f"RGB Studio: http://127.0.0.1:{args.port}")
 
