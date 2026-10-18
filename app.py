@@ -39,6 +39,7 @@ DEFAULT_SETTINGS = {
     "startup_profile": "",
     "zone_sizes": {},  # device name -> {zone name: LED count} for addressable headers
     "monitor": 1,
+    "last_lighting": {},  # snapshot restored on the next start when no startup profile is set
 }
 
 
@@ -99,6 +100,8 @@ def connect_openrgb():
     start = settings.get("startup_profile")
     if start in profiles:
         apply_profile(profiles[start])
+    elif settings.get("last_lighting"):
+        apply_profile({"devices": settings["last_lighting"]})
     threading.Thread(target=settle_devices, daemon=True).start()
     return True
 
@@ -206,6 +209,14 @@ def effect_cfg(body):
     return cfg
 
 
+def remember_lighting():
+    """Persist what is on screen now so a restart (or autostart) brings it back."""
+    if state["backend"].kind != "openrgb":
+        return
+    settings["last_lighting"] = snapshot_by_name()
+    save_json(SETTINGS_FILE, settings)
+
+
 def snapshot_by_name():
     """Current lighting keyed by device name and 'device::zone' (ids can change between sessions)."""
     out = {}
@@ -236,6 +247,8 @@ def apply_profile(data):
             if zi is not None:
                 engine.assign(f'{dev["id"]}:{zi}', effect_cfg(cfg))
         elif cfg.get("kind") == "hardware":
+            if str(cfg.get("mode", "")).lower() == "direct":
+                continue  # "Direct" just means software control; nothing to restore
             engine.release(dev["id"])
             try:
                 backend.set_hardware_mode(dev["id"], cfg["mode"])
@@ -316,6 +329,7 @@ def api_apply():
         return jsonify({"error": str(exc)}), 400
     for key in targets_from(body):
         engine.assign(key, dict(cfg))
+    remember_lighting()
     return jsonify({"ok": True, "assignments": dict(engine.assignments)})
 
 
@@ -332,6 +346,7 @@ def api_hardware():
             backend.set_hardware_mode(dev_id, body["mode"], color, body.get("speed"))
         except Exception as exc:
             errors.append(f'{backend.devices[dev_id]["name"]}: {exc}')
+    remember_lighting()
     return jsonify({"ok": not errors, "errors": errors})
 
 
@@ -534,6 +549,7 @@ def api_profile_load(name):
     if name not in profiles:
         return jsonify({"error": "Профиль не найден"}), 404
     apply_profile(profiles[name])
+    remember_lighting()
     return jsonify({"ok": True})
 
 
