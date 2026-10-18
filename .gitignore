@@ -4,3 +4,5 @@ openrgb/
 build/
 dist/
 *.spec
+release/
+.claude/

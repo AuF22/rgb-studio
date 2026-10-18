@@ -25,7 +25,7 @@ const TYPE_NAMES = {
   keyboard: "Клавиатура", mouse: "Мышь", ledstrip: "LED-лента", headset: "Гарнитура", case: "Корпус",
   mousemat: "Коврик", light: "Светильник", speaker: "Колонки", storage: "Накопитель", accessory: "Устройство",
 };
-const UI_VERSION = "1.3";  // keep in sync with APP_VERSION in app.py
+const UI_VERSION = "1.0.0";  // keep in sync with APP_VERSION in app.py
 const SWATCHES = ["#ff0040", "#ff6a00", "#ffd000", "#00ff6a", "#00e5ff", "#0066ff", "#7c5cff", "#ff00d4", "#ffffff", "#ffb380"];
 
 const st = {
@@ -601,6 +601,7 @@ function keyLabel(key) {
 function openScreenEditor() {
   if (!st.selected.size) { toast("Сначала выберите устройства слева"); return; }
   screenEd = { keys: targets(), active: targets()[0], drag: null, grid: null, timer: null };
+  $("#monitorSelect").hidden = true;  // shown once we know there is more than one monitor
   for (const k of screenEd.keys) st.regions[k] = { ...regionFor(k) };
   const presets = $("#presetRow");
   presets.innerHTML = "";

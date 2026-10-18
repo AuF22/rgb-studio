@@ -28,7 +28,7 @@ DATA = Path(os.environ.get("APPDATA", rt.app_dir())) / "RGBStudio"
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
 PROFILES_FILE = DATA / "profiles.json"
-APP_VERSION = "1.3"  # keep in sync with UI_VERSION in static/app.js
+APP_VERSION = "1.0.0"  # keep in sync with UI_VERSION in static/app.js
 TASK_NAME = "RGB Studio"
 PORT_SPAN = 20  # ports tried after the default one
 DEFAULT_HEADER_LEDS = 40
@@ -700,7 +700,8 @@ def main():
 
     httpd, state["port"] = bind_server(args.port)
     args.port = state["port"]
-    save_json(INSTANCE_FILE, {"port": args.port, "pid": os.getpid()})
+    if not args.no_window:  # server-only runs (tests, tools) must not hijack the main instance
+        save_json(INSTANCE_FILE, {"port": args.port, "pid": os.getpid()})
 
     if args.demo:
         state["phase"] = "demo"
