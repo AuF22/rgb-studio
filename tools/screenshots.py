@@ -1,12 +1,14 @@
 """Take README screenshots of the demo UI with headless Edge (Chrome DevTools Protocol).
 
-    py app.py --no-window --demo --port 6830     (in another terminal)
-    py tools/screenshots.py
+    py app.py --no-window --demo --port 6830     (in another terminal; set APPDATA to a scratch
+                                                 folder so your own settings stay untouched)
+    py tools/screenshots.py [port]
 
 Needs: pip install websocket-client. The screen-editor shot uses a painted picture,
 never the real screen.
 """
 import base64
+import sys
 import json
 import shutil
 import subprocess
@@ -19,7 +21,7 @@ import websocket
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs"
-APP = "http://127.0.0.1:6830"
+APP = f"http://127.0.0.1:{sys.argv[1] if len(sys.argv) > 1 else 6830}"
 PORT = 9333
 W, H = 1400, 900
 
@@ -30,8 +32,16 @@ EDGE = next(p for p in [
 ] if p and Path(p).exists())
 
 PREPARE = """
+setLanguage('en');
 document.querySelector('#bannerClose').click();
+toggleKey('0'); toggleKey('0');  // select everything
 document.querySelector('.device .expand').click();
+"""
+
+CUSTOM_EDITOR = """
+document.querySelector('#screenDlg').close();
+openCustomEditor(null);
+const sel = document.querySelector('#ceTemplate'); sel.value = 'aurora'; sel.onchange({ target: sel });
 """
 
 FAKE_SCREEN = """
@@ -106,6 +116,9 @@ def main():
         tab.js(FAKE_SCREEN)
         time.sleep(1)
         tab.shot("screen-editor.png")
+        tab.js(CUSTOM_EDITOR)
+        time.sleep(1.5)
+        tab.shot("custom-editor.png")
     finally:
         edge.terminate()
         shutil.rmtree(profile, ignore_errors=True)

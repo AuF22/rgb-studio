@@ -14,24 +14,24 @@
     <span class="brand-name">RGB Studio</span>
   </div>
 
-  <button class="status-pill" id="statusPill" title="Подключение">
-    <span class="dot"></span><span id="statusText">Подключение…</span>
+  <button class="status-pill" id="statusPill" data-i18n-title="top.settings">
+    <span class="dot"></span><span id="statusText" data-i18n="status.connecting">Подключение…</span>
   </button>
 
   <div class="topbar-spacer"></div>
 
-  <label class="master" title="Общая яркость всех устройств">
+  <label class="master" data-i18n-title="top.brightness">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
     <input type="range" id="masterBrightness" min="0" max="100" value="100">
     <span id="masterValue">100%</span>
   </label>
 
   <div class="profile-box">
-    <select id="profileSelect" title="Профили"><option value="">Профили…</option></select>
-    <button class="btn ghost" id="saveProfileBtn" title="Сохранить текущую подсветку как профиль">Сохранить</button>
+    <select id="profileSelect"><option value="" data-i18n="top.profiles">Профили…</option></select>
+    <button class="btn ghost" id="saveProfileBtn" data-i18n="top.save" data-i18n-title="top.saveTitle">Сохранить</button>
   </div>
 
-  <button class="icon-btn" id="settingsBtn" title="Настройки">
+  <button class="icon-btn" id="settingsBtn" data-i18n-title="top.settings">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
   </button>
 </header>
@@ -39,26 +39,26 @@
 <div class="banner" id="banner" hidden>
   <span id="bannerText"></span>
   <button class="btn small" id="bannerAction"></button>
-  <button class="banner-close" id="bannerClose" title="Скрыть">✕</button>
+  <button class="banner-close" id="bannerClose" data-i18n-title="common.hide">✕</button>
 </div>
 
 <main class="layout">
   <aside class="sidebar">
     <div class="side-head">
-      <h2>Устройства</h2>
-      <button class="link" id="selectAllBtn">Выбрать все</button>
+      <h2 data-i18n="side.devices">Устройства</h2>
+      <button class="link" id="selectAllBtn" data-i18n="side.selectAll">Выбрать все</button>
     </div>
     <div class="device-list" id="deviceList"></div>
     <button class="btn ghost wide" id="rescanBtn">
       <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-      Пересканировать
+      <span data-i18n="side.rescan">Пересканировать</span>
     </button>
   </aside>
 
   <section class="content">
     <div class="panel preview-panel">
       <div class="panel-head">
-        <h2>Предпросмотр</h2>
+        <h2 data-i18n="preview.title">Предпросмотр</h2>
         <span class="muted" id="targetInfo"></span>
       </div>
       <div class="preview" id="preview"></div>
@@ -66,8 +66,8 @@
 
     <div class="panel controls">
       <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="effects">Эффекты</button>
-        <button class="tab" data-tab="hardware">Встроенные режимы</button>
+        <button class="tab active" data-tab="effects" data-i18n="tab.effects">Эффекты</button>
+        <button class="tab" data-tab="hardware" data-i18n="tab.hardware">Встроенные режимы</button>
       </div>
 
       <div class="tab-body" id="tab-effects">
@@ -75,10 +75,10 @@
         <div class="effect-extra" id="effectExtra"></div>
 
         <div class="control-row" id="colorRow">
-          <div class="control-label">Цвета</div>
+          <div class="control-label" data-i18n="ctl.colors">Цвета</div>
           <div class="colors">
             <div class="color-chips" id="colorChips"></div>
-            <button class="chip-add" id="addColor" title="Добавить цвет">+</button>
+            <button class="chip-add" id="addColor" data-i18n-title="ctl.addColor">+</button>
           </div>
           <div class="swatches" id="swatches"></div>
           <div class="color-hint" id="colorHint"></div>
@@ -86,30 +86,30 @@
 
         <div class="sliders">
           <label class="slider" id="speedRow">
-            <span class="control-label"><span id="speedLabel">Скорость</span> <b id="speedVal">50</b></span>
+            <span class="control-label"><span id="speedLabel" data-i18n="slider.speed">Скорость</span> <b id="speedVal">50</b></span>
             <input type="range" id="speed" min="0" max="100" value="50">
           </label>
           <label class="slider">
-            <span class="control-label">Яркость эффекта <b id="brightVal">100%</b></span>
+            <span class="control-label"><span data-i18n="ctl.brightness">Яркость эффекта</span> <b id="brightVal">100%</b></span>
             <input type="range" id="brightness" min="5" max="100" value="100">
           </label>
           <label class="toggle" id="reverseRow">
-            <input type="checkbox" id="reverse"><span class="switch"></span> Обратное направление
+            <input type="checkbox" id="reverse"><span class="switch"></span> <span data-i18n="ctl.reverse">Обратное направление</span>
           </label>
         </div>
-        <p class="hint">Изменения применяются сразу к выбранным устройствам.</p>
+        <p class="hint" data-i18n="ctl.hint">Изменения применяются сразу к выбранным устройствам.</p>
       </div>
 
       <div class="tab-body" id="tab-hardware" hidden>
-        <p class="hint">Режимы, которые хранятся в самом устройстве. Работают даже когда RGB Studio закрыта.</p>
+        <p class="hint" data-i18n="hw.hint">Режимы, которые хранятся в самом устройстве.</p>
         <div class="mode-list" id="modeList"></div>
         <div class="sliders">
           <label class="slider">
-            <span class="control-label">Цвет режима</span>
+            <span class="control-label" data-i18n="hw.color">Цвет режима</span>
             <input type="color" id="hwColor" value="#7c5cff">
           </label>
           <label class="slider">
-            <span class="control-label">Скорость <b id="hwSpeedVal">50</b></span>
+            <span class="control-label"><span data-i18n="slider.speed">Скорость</span> <b id="hwSpeedVal">50</b></span>
             <input type="range" id="hwSpeed" min="0" max="100" value="50">
           </label>
         </div>
@@ -121,45 +121,51 @@
 <dialog id="settingsDlg">
   <form method="dialog" class="dlg">
     <div class="dlg-head">
-      <h2>Настройки</h2>
-      <button class="icon-btn" value="close" title="Закрыть">✕</button>
+      <h2 data-i18n="set.title">Настройки</h2>
+      <button class="icon-btn" value="close" data-i18n-title="common.close">✕</button>
     </div>
 
     <section>
-      <h3>Движок подсветки</h3>
+      <h3 data-i18n="set.language">Язык</h3>
+      <div class="lang-switch" id="langSwitch">
+        <button type="button" class="btn ghost" data-lang="en">English</button>
+        <button type="button" class="btn ghost" data-lang="ru">Русский</button>
+      </div>
+    </section>
+
+    <section>
+      <h3 data-i18n="engine.title">Движок подсветки</h3>
       <div class="engine-info" id="engineInfo"></div>
       <div class="btn-row">
-        <button type="button" class="btn primary" id="restartEngineBtn">Перезапустить движок</button>
-        <button type="button" class="btn ghost" id="demoBtn">Демо-режим</button>
+        <button type="button" class="btn primary" id="restartEngineBtn" data-i18n="engine.restart">Перезапустить движок</button>
+        <button type="button" class="btn ghost" id="demoBtn" data-i18n="engine.demo">Демо-режим</button>
       </div>
       <details class="advanced">
-        <summary>Подключиться к другому OpenRGB</summary>
+        <summary data-i18n="engine.other">Подключиться к другому OpenRGB</summary>
         <div class="field-row">
-          <label class="field"><span>Адрес</span><input id="hostInput" value="127.0.0.1"></label>
-          <label class="field narrow"><span>Порт</span><input id="portInput" type="number" value="6742"></label>
+          <label class="field"><span data-i18n="engine.host">Адрес</span><input id="hostInput" value="127.0.0.1"></label>
+          <label class="field narrow"><span data-i18n="engine.port">Порт</span><input id="portInput" type="number" value="6742"></label>
         </div>
-        <button type="button" class="btn ghost" id="connectBtn">Подключиться</button>
+        <button type="button" class="btn ghost" id="connectBtn" data-i18n="engine.connect">Подключиться</button>
       </details>
     </section>
 
     <section>
-      <h3>Запуск</h3>
-      <label class="toggle"><input type="checkbox" id="autostart"><span class="switch"></span> Запускать вместе с Windows (в трей)</label>
-      <label class="field"><span>Профиль при запуске</span>
-        <select id="startupProfile"><option value="">Не загружать</option></select>
+      <h3 data-i18n="set.startup">Запуск</h3>
+      <label class="toggle"><input type="checkbox" id="autostart"><span class="switch"></span> <span data-i18n="set.autostart">Запускать вместе с Windows (в трей)</span></label>
+      <label class="field"><span data-i18n="set.startupProfile">Профиль при запуске</span>
+        <select id="startupProfile"></select>
       </label>
     </section>
 
     <section>
-      <h3>Профили</h3>
+      <h3 data-i18n="set.profiles">Профили</h3>
       <div class="profile-manage" id="profileManage"></div>
     </section>
 
     <section class="about">
-      <h3>О программе</h3>
-      <p>RGB Studio управляет подсветкой через встроенный движок <b>OpenRGB</b> (GPL-2.0, openrgb.org) —
-      отдельно ничего устанавливать не нужно. Закрытие окна не выключает подсветку: приложение продолжает
-      работать в трее, выйти можно через значок у часов.</p>
+      <h3 data-i18n="set.about">О программе</h3>
+      <p data-i18n-html="set.aboutText"></p>
     </section>
   </form>
 </dialog>
@@ -167,18 +173,16 @@
 <dialog id="countDlg">
   <form method="dialog" class="dlg">
     <div class="dlg-head">
-      <h2 id="countTitle">Сколько светодиодов?</h2>
-      <button class="icon-btn" value="cancel" title="Закрыть">✕</button>
+      <h2 id="countTitle" data-i18n="count.title">Сколько светодиодов?</h2>
+      <button class="icon-btn" value="cancel" data-i18n-title="common.close">✕</button>
     </div>
-    <p class="muted">Светодиоды ARGB не сообщают, сколько их подключено, поэтому подберём на глаз.
-      Двигайте ползунок, пока <b>красный</b> огонёк не окажется на <b>последнем</b> светодиоде вентилятора или ленты.
-      Если вентиляторы соединены цепочкой — до конца последнего.</p>
+    <p class="muted" data-i18n-html="count.text"></p>
     <div class="count-big"><button type="button" class="icon-btn" id="countMinus">−</button>
       <span id="countValue">20</span><button type="button" class="icon-btn" id="countPlus">+</button></div>
     <input type="range" id="countRange" min="1" max="300" value="20">
     <div class="btn-row">
-      <button type="button" class="btn primary" id="countSave">Сохранить</button>
-      <button type="button" class="btn ghost" id="countCancel">Отмена</button>
+      <button type="button" class="btn primary" id="countSave" data-i18n="common.save">Сохранить</button>
+      <button type="button" class="btn ghost" id="countCancel" data-i18n="common.cancel">Отмена</button>
     </div>
   </form>
 </dialog>
@@ -186,32 +190,87 @@
 <dialog id="screenDlg" class="wide-dlg">
   <form method="dialog" class="dlg">
     <div class="dlg-head">
-      <h2>Области экрана</h2>
-      <button class="icon-btn" value="close" title="Закрыть">✕</button>
+      <h2 data-i18n="screen.title">Области экрана</h2>
+      <button class="icon-btn" value="close" data-i18n-title="common.close">✕</button>
     </div>
-    <p class="muted">Выберите устройство или зону справа и обведите мышкой часть экрана, цвет которой оно будет повторять.</p>
+    <p class="muted" data-i18n="screen.text"></p>
     <div class="screen-wrap">
       <div class="screen-box">
         <canvas id="screenCanvas" width="640" height="360"></canvas>
-        <select id="monitorSelect" title="Монитор"></select>
+        <select id="monitorSelect" data-i18n-title="screen.monitor"></select>
       </div>
       <div class="screen-side">
         <div class="screen-targets" id="screenTargets"></div>
         <div class="preset-row" id="presetRow"></div>
-        <label class="field"><span>Как раскладывать цвета</span>
+        <label class="field"><span data-i18n="screen.mode">Как раскладывать цвета</span>
           <select id="regionMode">
-            <option value="avg">Средний цвет области</option>
-            <option value="h">Слева направо</option>
-            <option value="v">Сверху вниз</option>
+            <option value="avg" data-i18n="screen.avg">Средний цвет области</option>
+            <option value="h" data-i18n="screen.h">Слева направо</option>
+            <option value="v" data-i18n="screen.v">Сверху вниз</option>
           </select>
         </label>
-        <label class="toggle"><input type="checkbox" id="regionReverse"><span class="switch"></span> В обратную сторону</label>
+        <label class="toggle"><input type="checkbox" id="regionReverse"><span class="switch"></span> <span data-i18n="screen.reverse">В обратную сторону</span></label>
       </div>
     </div>
   </form>
 </dialog>
 
+<dialog id="customDlg" class="wide-dlg">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head">
+      <h2 data-i18n="ce.title">Конструктор эффекта</h2>
+      <button class="icon-btn" value="close" data-i18n-title="common.close">✕</button>
+    </div>
+    <p class="muted" data-i18n="ce.intro"></p>
+    <div class="ce-top">
+      <label class="field"><span data-i18n="ce.name">Название</span><input id="ceName" maxlength="40"></label>
+      <label class="field narrow-2"><span data-i18n="ce.template">Шаблон</span><select id="ceTemplate"></select></label>
+    </div>
+    <canvas id="cePreview" class="ce-preview" width="960" height="44"></canvas>
+
+    <div class="ce-section">
+      <div class="ce-head"><span class="control-label" data-i18n="ce.timeline">Кадры</span>
+        <span class="ce-head-btns">
+          <button type="button" class="btn small ghost" id="ceAddFrame" data-i18n="ce.addFrame">+ Кадр</button>
+          <button type="button" class="btn small ghost danger" id="ceDelFrame" data-i18n="ce.removeFrame">Удалить кадр</button>
+        </span>
+      </div>
+      <div class="ce-timeline" id="ceTimeline"><div class="ce-playhead" id="cePlayhead"></div></div>
+    </div>
+
+    <div class="ce-grid">
+      <div class="ce-section">
+        <label class="slider"><span class="control-label"><span data-i18n="ce.frameTime">Момент кадра</span> <b id="ceFrameTimeVal">0%</b></span>
+          <input type="range" id="ceFrameTime" min="0" max="99" value="0"></label>
+        <div class="ce-head"><span class="control-label" data-i18n="ce.stops">Градиент кадра</span>
+          <button type="button" class="btn small ghost" id="ceAddStop" data-i18n="ce.addStop">+ Цвет</button></div>
+        <div class="ce-gradient" id="ceGradient"></div>
+        <div class="ce-stops" id="ceStops"></div>
+      </div>
+      <div class="ce-section">
+        <label class="slider"><span class="control-label"><span data-i18n="ce.duration">Длина цикла</span> <b id="ceDurationVal">3 s</b></span>
+          <input type="range" id="ceDuration" min="5" max="200" value="30"></label>
+        <label class="slider"><span class="control-label"><span data-i18n="ce.scroll">Движение по светодиодам</span> <b id="ceScrollVal">0</b></span>
+          <input type="range" id="ceScroll" min="-100" max="100" value="0"></label>
+        <p class="hint" data-i18n="ce.scrollHint"></p>
+        <label class="field"><span data-i18n="ce.transition">Переход между кадрами</span>
+          <select id="ceEase"><option value="smooth" data-i18n="ce.smooth">Плавный</option><option value="step" data-i18n="ce.step">Резкий</option></select></label>
+        <label class="toggle"><input type="checkbox" id="ceHard"><span class="switch"></span> <span data-i18n="ce.hard">Резкие границы цветов</span></label>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button type="button" class="btn primary" id="ceSave" data-i18n="common.save">Сохранить</button>
+      <button type="button" class="btn ghost" id="ceCancel" data-i18n="common.cancel">Отмена</button>
+      <span class="topbar-spacer"></span>
+      <button type="button" class="btn ghost danger" id="ceDelete" data-i18n="common.delete">Удалить</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="toasts" id="toasts"></div>
+<script src="/static/i18n.js"></script>
+<script src="/static/custom.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from lang import tr
+
 CREATE_NO_WINDOW = 0x08000000
 
 
@@ -108,7 +110,7 @@ def run_elevated(exe, params="", wait=False, cwd=None):
     info.lpDirectory = str(cwd) if cwd else None
     info.nShow = 0 if wait else 1
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
-        raise PermissionError("Запуск с правами администратора отменён")
+        raise PermissionError(tr("Запуск с правами администратора отменён", "The administrator prompt was cancelled"))
     if not wait:
         return None
     ctypes.windll.kernel32.WaitForSingleObject(info.hProcess, 0xFFFFFFFF)
@@ -120,10 +122,10 @@ def run_elevated(exe, params="", wait=False, cwd=None):
 
 def install_pawnio():
     if not PAWNIO_SETUP.exists():
-        raise FileNotFoundError("Установщик PawnIO не найден в папке приложения")
+        raise FileNotFoundError(tr("Установщик PawnIO не найден в папке приложения", "The PawnIO installer is missing from the app folder"))
     code = run_elevated(PAWNIO_SETUP, "-install -silent", wait=True)
     if code not in (0, 3010):  # 3010 = installed, reboot required
-        raise RuntimeError(f"Установщик PawnIO завершился с кодом {code}")
+        raise RuntimeError(tr(f"Установщик PawnIO завершился с кодом {code}", f"The PawnIO installer exited with code {code}"))
     return code == 3010
 
 
@@ -151,7 +153,7 @@ class OpenRGBRuntime:
                 self.state = "running" if self.proc and self.proc.poll() is None else "external"
                 return True
             if not self.bundled:
-                self.state, self.error = "missing", "Встроенный движок OpenRGB не найден"
+                self.state, self.error = "missing", tr("Встроенный движок OpenRGB не найден", "The built-in OpenRGB engine was not found")
                 return False
             self.state, self.error = "starting", None
             self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +163,7 @@ class OpenRGBRuntime:
                 self.proc = subprocess.Popen(args, cwd=str(ENGINE_DIR), creationflags=CREATE_NO_WINDOW,
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError as exc:
-                self.state, self.error = "failed", f"Не удалось запустить движок: {exc}"
+                self.state, self.error = "failed", tr(f"Не удалось запустить движок: {exc}", f"Couldn't start the engine: {exc}")
                 return False
             try:
                 self._job = kill_with_parent(self.proc)
@@ -171,13 +173,13 @@ class OpenRGBRuntime:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
-                self.state, self.error = "failed", f"Движок завершился с кодом {self.proc.returncode}"
+                self.state, self.error = "failed", tr(f"Движок завершился с кодом {self.proc.returncode}", f"The engine exited with code {self.proc.returncode}")
                 return False
             if port_open(self.host, self.port):
                 self.state = "running"
                 return True
             time.sleep(0.25)
-        self.state, self.error = "failed", "Движок не ответил вовремя"
+        self.state, self.error = "failed", tr("Движок не ответил вовремя", "The engine did not respond in time")
         return False
 
     def stop(self):

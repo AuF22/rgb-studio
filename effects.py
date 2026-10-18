@@ -31,7 +31,10 @@ EFFECTS = {
     "music_level": ("Музыка: уровень",  "music",   True,  True,  "audio",    "Чувствительность"),
     "screen":      ("Повтор экрана",    "screen",  False, True,  "screen",   "Плавность"),
     "off":         ("Выключить",        "basic",   False, False, None,       None),
+    "custom":      ("Свой эффект",      "custom",  False, True,  None,       "Скорость"),
 }
+
+CUSTOM_EFFECTS = {}  # id -> definition; app.py points this at the saved custom effects
 
 
 def hex_to_rgb(value):
@@ -137,6 +140,9 @@ def render(cfg, ctx):
         out = music_effect(effect, colors, s, ctx)
     elif effect == "screen":
         out = screen_effect(cfg, s, ctx)
+    elif effect == "custom":
+        defn = CUSTOM_EFFECTS.get(cfg.get("custom_id"))
+        out = custom_effect(defn, s, ctx) if defn else [(0, 0, 0)] * n
     else:
         out = [(0, 0, 0)] * n
 
@@ -235,6 +241,57 @@ def music_effect(effect, colors, sens, ctx):
     lit = min(1.0, audio.level * gain * 1.6) * n  # music_level: VU meter
     stops = colors if len(colors) > 1 else [colors[0], colors[0]]
     return [scale(gradient_at(stops, i / max(1, n - 1)), max(0.0, min(1.0, lit - i))) for i in range(n)]
+
+
+def _gradient(stops, pos, loop, hard):
+    """Colour at pos (0..1) of a gradient given as [{pos, color}]. Mirrors gradientColor() in custom.js."""
+    s = sorted(stops, key=lambda x: x["pos"])
+    cols = [hex_to_rgb(x["color"]) for x in s]
+    if len(s) == 1:
+        return cols[0]
+    if hard:
+        pick = len(s) - 1  # a stop's colour holds until the next stop
+        for i, x in enumerate(s):
+            if x["pos"] <= pos:
+                pick = i
+        if pos < s[0]["pos"]:
+            pick = len(s) - 1 if loop else 0
+        return cols[pick]
+    if pos <= s[0]["pos"] or pos >= s[-1]["pos"]:
+        if not loop:
+            return cols[0] if pos <= s[0]["pos"] else cols[-1]
+        span = (1 - s[-1]["pos"] + s[0]["pos"]) or 1
+        return lerp(cols[-1], cols[0], ((pos - s[-1]["pos"] + 1) % 1) / span)
+    for i in range(len(s) - 1):
+        if pos <= s[i + 1]["pos"]:
+            k = (pos - s[i]["pos"]) / ((s[i + 1]["pos"] - s[i]["pos"]) or 1)
+            return lerp(cols[i], cols[i + 1], k)
+    return cols[-1]
+
+
+def custom_effect(defn, s, ctx):
+    """User-built effect: keyframed gradients on a loop, optionally scrolling. Mirrors renderCustom() in custom.js."""
+    n = ctx.n
+    factor = 2 ** ((s * 100 - 50) / 50)  # speed slider: 50 = as designed, 0 = half, 100 = double
+    frames = sorted(defn["frames"], key=lambda f: f["t"])
+    phase = (ctx.t * factor / max(0.1, defn.get("duration", 3))) % 1
+    ai = len(frames) - 1
+    for i, f in enumerate(frames):
+        if f["t"] <= phase:
+            ai = i
+    a, b = frames[ai], frames[(ai + 1) % len(frames)]
+    span = ((b["t"] - a["t"] + 1) % 1) or 1
+    k = 0.0 if len(frames) == 1 else ((phase - a["t"]) % 1) / span
+    k = 0.0 if defn.get("ease") == "step" else k * k * (3 - 2 * k)
+    scroll = defn.get("scroll", 0) / 100
+    offset = ctx.t * factor * scroll * 0.5
+    loop = scroll != 0
+    hard = defn.get("hard", False)
+    out = []
+    for i in range(n):
+        p = ((i / n - offset) % 1) if loop else i / max(1, n - 1)
+        out.append(lerp(_gradient(a["stops"], p, loop, hard), _gradient(b["stops"], p, loop, hard), k))
+    return out
 
 
 def screen_effect(cfg, smooth, ctx):

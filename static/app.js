@@ -20,12 +20,8 @@ const ICONS = {
   case: '<rect x="6" y="2" width="12" height="20" rx="2"/><circle cx="12" cy="15" r="3"/><path d="M9 6h6"/>',
   accessory: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
 };
-const TYPE_NAMES = {
-  motherboard: "Материнская плата", ram: "Оперативная память", gpu: "Видеокарта", cooler: "Охлаждение",
-  keyboard: "Клавиатура", mouse: "Мышь", ledstrip: "LED-лента", headset: "Гарнитура", case: "Корпус",
-  mousemat: "Коврик", light: "Светильник", speaker: "Колонки", storage: "Накопитель", accessory: "Устройство",
-};
-const UI_VERSION = "1.0.0";  // keep in sync with APP_VERSION in app.py
+const typeName = (type) => (I18N.ru["type." + type] ? t("type." + type) : t("type.accessory"));
+const UI_VERSION = "1.1.0";  // keep in sync with APP_VERSION in app.py
 const SWATCHES = ["#ff0040", "#ff6a00", "#ffd000", "#00ff6a", "#00e5ff", "#0066ff", "#7c5cff", "#ff00d4", "#ffffff", "#ffb380"];
 
 const st = {
@@ -44,7 +40,7 @@ async function api(path, body, method) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
+  if (!res.ok) throw new Error(data.error || t("common.error", { code: res.status }));
   return data;
 }
 
@@ -61,6 +57,8 @@ async function loadState(keepSelection) {
   const data = await api("/api/state");
   const firstLoad = !st.devices.length;
   Object.assign(st, data);
+  const lang = detectLang(st.settings.language);
+  if (lang !== LANG) { LANG = lang; applyI18n(); }
   const ids = new Set(st.devices.map((d) => String(d.id)));
   const valid = (k) => { const [d, z] = k.split(":"); const dev = st.devices[+d]; return dev && (z === undefined || +z < dev.zones.length); };
   const known = st.knownIds || new Set();
@@ -76,15 +74,34 @@ function cfgFor(key) { return st.assignments[key] || st.assignments[key.split(":
 function syncUiFromSelection() {
   const first = [...st.selected][0];
   const cfg = first && cfgFor(first);
-  if (cfg) Object.assign(st.ui, cfg, { active: Math.min(st.ui.active, cfg.colors.length - 1) });
+  if (cfg) Object.assign(st.ui, { custom_id: null }, cfg, { active: Math.min(st.ui.active, cfg.colors.length - 1) });
 }
 
 function targets() { return [...st.selected]; }
 const devKey = (d) => String(d.id);
-const effectTitle = (id) => (st.effects.find((e) => e.id === id) || {}).title || id;
+const effectTitle = (id, cfg) => {
+  if (id === "custom" && cfg && st.custom_effects && st.custom_effects[cfg.custom_id]) return st.custom_effects[cfg.custom_id].name;
+  return I18N.ru["fx." + id] ? t("fx." + id) : ((st.effects.find((e) => e.id === id) || {}).title || id);
+};
+const SLIDER_KEYS = { breathing: "slider.speed", cycle: "slider.speed", rainbow: "slider.speed", wave: "slider.speed",
+  color_wave: "slider.speed", comet: "slider.speed", starry: "slider.stars", reactive: "slider.fade",
+  ripple: "slider.rippleSpeed", music_spectrum: "slider.sensitivity", music_pulse: "slider.sensitivity",
+  music_level: "slider.sensitivity", screen: "slider.smooth", custom: "slider.speed" };
 
 /* ---------- render ---------- */
+function setLanguage(lang) {
+  LANG = lang;
+  applyI18n();
+  renderAll();
+  api("/api/settings", { language: lang }).then((r) => { st.settings = r.settings; }).catch(() => {});
+}
+
+function renderLangSwitch() {
+  document.querySelectorAll("#langSwitch [data-lang]").forEach((b) => b.classList.toggle("active", b.dataset.lang === LANG));
+}
+
 function renderAll() {
+  renderLangSwitch();
   renderStatus();
   renderDevices();
   renderPreview();
@@ -100,14 +117,14 @@ const bannerHidden = new Set();
 function bannerFor(s) {
   const e = s.engine || {};
   if (st.app_version !== UI_VERSION) return { kind: "err", key: "version",
-    text: "Работает старая копия RGB Studio, а интерфейс уже новый, поэтому часть функций не видна. Закройте её: значок у часов → «Выход», затем снова запустите RGB Studio." };
-  if (s.phase === "starting") return { kind: "info", key: "starting", text: "Запускаю движок подсветки и ищу устройства… Это занимает до 20 секунд." };
+    text: t("banner.version") };
+  if (s.phase === "starting") return { kind: "info", key: "starting", text: t("banner.starting") };
   if (s.mode === "demo") {
-    if (s.error) return { kind: "err", key: "fail", text: `Движок подсветки не запустился: ${s.error}. Показаны демо-устройства.`, action: "Повторить", run: reconnect };
-    return { kind: "", key: "demo", text: "Демо-режим: устройства виртуальные, подсветка компьютера не меняется.", action: "Подключить устройства", run: reconnect };
+    if (s.error) return { kind: "err", key: "fail", text: t("banner.fail", { err: s.error }), action: t("banner.retry"), run: reconnect };
+    return { kind: "", key: "demo", text: t("banner.demo"), action: t("banner.connect"), run: reconnect };
   }
-  if (!e.admin) return { kind: "", key: "admin", text: "Оперативная память и часть устройств видны только с правами администратора.", action: "Перезапустить от администратора", run: elevate };
-  if (!e.pawnio && e.pawnio_setup) return { kind: "", key: "pawnio", text: "Для управления памятью и материнской платой нужен драйвер PawnIO (ставится один раз).", action: "Установить драйвер", run: installPawnio };
+  if (!e.admin) return { kind: "", key: "admin", text: t("banner.admin"), action: t("banner.elevate"), run: elevate };
+  if (!e.pawnio && e.pawnio_setup) return { kind: "", key: "pawnio", text: t("banner.pawnio"), action: t("banner.installDriver"), run: installPawnio };
   if (s.error) return { kind: "err", key: "err", text: s.error };
   return null;
 }
@@ -118,8 +135,8 @@ function renderStatus() {
   const ext = s.engine && s.engine.state === "external";
   pill.className = "status-pill " + (s.phase === "starting" ? "starting" : s.mode === "openrgb" ? "ok" : "demo");
   $("#statusText").textContent =
-    s.phase === "starting" ? "Поиск устройств…" :
-    s.mode === "openrgb" ? `${ext ? "OpenRGB" : "Подключено"} · устройств: ${st.devices.length}` : "Демо-режим";
+    s.phase === "starting" ? t("status.searching") :
+    s.mode === "openrgb" ? `${ext ? "OpenRGB" : t("status.connected")} · ${t("status.devices", { n: st.devices.length })}` : t("status.demo");
 
   const banner = $("#banner");
   const b = bannerFor(s);
@@ -142,13 +159,12 @@ function renderStatus() {
 function renderEngineInfo() {
   const e = st.status.engine || {};
   const yes = (v, good, bad) => `<b class="${v ? "good" : "bad"}">${v ? good : bad}</b>`;
-  const engineText = { running: "работает (встроенный)", external: "внешний OpenRGB", starting: "запускается…",
-    missing: "не найден", failed: "ошибка", idle: "остановлен" }[e.state] || "—";
+  const engineText = e.state ? t("engine." + e.state) : "—";
   $("#engineInfo").innerHTML = `
-    <span>Движок</span>${yes(["running", "external"].includes(e.state), engineText, engineText)}
-    <span>Устройств найдено</span><b>${st.status.mode === "openrgb" ? st.devices.length : 0}</b>
-    <span>Права администратора</span>${yes(e.admin, "есть", "нет")}
-    <span>Драйвер памяти/платы (PawnIO)</span>${yes(e.pawnio, "установлен", "не установлен")}`;
+    <span>${t("engine.engine")}</span>${yes(["running", "external"].includes(e.state), engineText, engineText)}
+    <span>${t("engine.found")}</span><b>${st.status.mode === "openrgb" ? st.devices.length : 0}</b>
+    <span>${t("engine.admin")}</span>${yes(e.admin, t("engine.yes"), t("engine.no"))}
+    <span>${t("engine.pawnio")}</span>${yes(e.pawnio, t("engine.installed"), t("engine.notInstalled"))}`;
 }
 
 async function reconnect() {
@@ -156,24 +172,24 @@ async function reconnect() {
   try {
     const r = await api("/api/connect", {});
     await loadState(false);
-    if (r.ok) toast(`Готово: найдено устройств — ${st.devices.length}`, "ok");
-    else toast(r.status.error || "Не удалось запустить движок", "err");
+    if (r.ok) toast(t("toast.found", { n: st.devices.length }), "ok");
+    else toast(r.status.error || t("toast.engineFail"), "err");
   } catch (e) { toast(e.message, "err"); }
 }
 
 async function elevate() {
   try {
     await api("/api/elevate", {});
-    toast("Перезапускаю с правами администратора…");
+    toast(t("toast.elevating"));
     setTimeout(() => window.close(), 800);
   } catch (e) { toast(e.message, "err"); }
 }
 
 async function installPawnio() {
-  toast("Устанавливаю драйвер PawnIO — подтвердите запрос Windows…");
+  toast(t("toast.installing"));
   try {
     const r = await api("/api/pawnio/install", {});
-    toast(r.reboot ? "Драйвер установлен. Перезагрузите компьютер, чтобы он заработал." : "Драйвер установлен, перезапускаю движок…", "ok");
+    toast(r.reboot ? t("toast.reboot") : t("toast.driverOk"), "ok");
     setTimeout(() => loadState(false), 1500);
   } catch (e) { toast(e.message, "err"); }
 }
@@ -183,8 +199,8 @@ function renderDevices() {
   list.innerHTML = "";
   if (!st.devices.length) {
     list.append(el("div", "empty", st.status.phase === "starting"
-      ? "Ищу устройства…"
-      : "Устройства не найдены. Попробуйте «Пересканировать» или перезапустите приложение от имени администратора."));
+      ? t("side.searching")
+      : t("side.none")));
   }
   st.expanded = st.expanded || new Set();
   for (const d of st.devices) {
@@ -192,16 +208,16 @@ function renderDevices() {
     const card = el("div", "device" + (st.selected.has(key) ? " selected" : ""));
     const cfg = st.assignments[key];
     const zoneCfgs = d.zones.filter((_, zi) => st.assignments[`${key}:${zi}`]).length;
-    const what = cfg ? effectTitle(cfg.effect) : zoneCfgs ? "зоны по отдельности" : d.active_mode;
+    const what = cfg ? effectTitle(cfg.effect, cfg) : zoneCfgs ? t("side.zonesSeparately") : d.active_mode;
     const multi = d.zones.length > 1;
     card.innerHTML = `
       <div class="device-icon"><svg viewBox="0 0 24 24">${ICONS[d.type] || ICONS.accessory}</svg></div>
       <div style="min-width:0">
         <div class="device-name" title="${esc(d.name)}">${esc(d.name)}</div>
-        <div class="device-meta">${TYPE_NAMES[d.type] || "Устройство"} · ${d.leds} LED · ${esc(what || "")}</div>
+        <div class="device-meta">${typeName(d.type)} · ${d.leds} LED · ${esc(what || "")}</div>
         <div class="device-strip" data-strip="${d.id}"></div>
       </div>
-      ${multi ? `<button class="expand" title="Зоны по отдельности">${st.expanded.has(key) ? "▾" : "▸"} ${d.zones.length}</button>` : "<span></span>"}
+      ${multi ? `<button class="expand" title="${t("side.zones")}">${st.expanded.has(key) ? "▾" : "▸"} ${d.zones.length}</button>` : "<span></span>"}
       <div class="check"></div>`;
     card.onclick = (ev) => toggleKey(key, ev.ctrlKey || ev.metaKey);
     if (multi) card.querySelector(".expand").onclick = (ev) => {
@@ -216,7 +232,7 @@ function renderDevices() {
         const zk = `${key}:${zi}`;
         const zc = st.assignments[zk];
         const row = el("div", "zone-row" + (st.selected.has(zk) ? " selected" : ""),
-          `<div class="check"></div><span>${esc(z.name)}</span><span class="zone-fx">${zc ? esc(effectTitle(zc.effect)) : z.leds + " LED"}</span>`);
+          `<div class="check"></div><span>${esc(z.name)}</span><span class="zone-fx">${zc ? esc(effectTitle(zc.effect, zc)) : z.leds + " LED"}</span>`);
         row.onclick = (ev) => toggleKey(zk, ev.ctrlKey || ev.metaKey);
         zl.append(row);
       });
@@ -224,12 +240,12 @@ function renderDevices() {
     }
   }
   const all = st.devices.length && st.devices.every((d) => st.selected.has(devKey(d)));
-  $("#selectAllBtn").textContent = all ? "Снять выбор" : "Выбрать все";
+  $("#selectAllBtn").textContent = all ? t("side.deselect") : t("side.selectAll");
   const zonesSel = [...st.selected].filter((k) => k.includes(":")).length;
   const devSel = st.selected.size - zonesSel;
   $("#targetInfo").textContent = st.selected.size
-    ? `Настраиваются: ${devSel ? `устройств ${devSel}` : ""}${devSel && zonesSel ? ", " : ""}${zonesSel ? `зон ${zonesSel}` : ""}`
-    : "Выберите устройства слева";
+    ? t("side.target", { what: [devSel ? t("side.targetDevices", { n: devSel }) : "", zonesSel ? t("side.targetZones", { n: zonesSel }) : ""].filter(Boolean).join(", ") })
+    : t("side.pick");
 }
 
 function toggleKey(key, only) {
@@ -290,11 +306,11 @@ function zoneSizer(d, z, zi) {
   const wrap = el("div", "sizer");
   const show = () => {
     wrap.innerHTML = "";
-    const b = el("button", "sizer-btn" + (z.leds ? "" : " warn"), z.leds ? `${z.leds} LED · изменить` : "Указать число LED");
-    b.title = "Сколько светодиодов в подключённых вентиляторах или ленте";
+    const b = el("button", "sizer-btn" + (z.leds ? "" : " warn"), z.leds ? t("zone.change", { n: z.leds }) : t("zone.set"));
+    b.title = t("zone.setTitle");
     b.onclick = (ev) => { ev.stopPropagation(); edit(); };
-    const find = el("button", "sizer-btn", "Подобрать");
-    find.title = "Подобрать число, глядя на подсветку";
+    const find = el("button", "sizer-btn", t("zone.find"));
+    find.title = t("zone.findTitle");
     find.onclick = (ev) => { ev.stopPropagation(); openCountFinder(d, z, zi); };
     wrap.append(b, find);
   };
@@ -306,7 +322,7 @@ function zoneSizer(d, z, zi) {
     const save = async () => {
       try {
         await api("/api/zone", { device: d.id, zone: zi, size: +inp.value });
-        toast(`«${esc(z.name)}»: ${inp.value} LED`, "ok");
+        toast(t("toast.zoneLeds", { zone: esc(z.name), n: inp.value }), "ok");
         await loadState(true);
       } catch (e) { toast(e.message, "err"); show(); }
     };
@@ -362,27 +378,25 @@ function specialSwatch(id, colors) {
   return null;
 }
 
-const GROUPS = [
-  ["basic", "Эффекты", ""],
-  ["keys", "Клавиатура", "реагирует на нажатия; на других устройствах — вспышки"],
-  ["music", "Музыка", "подсветка под звук, который играет на компьютере"],
-  ["screen", "Экран", "повторяет цвета с монитора"],
-];
+const GROUPS = ["basic", "keys", "music", "screen", "custom"];
 
 function renderEffects() {
   const root = $("#effectGrid");
   root.innerHTML = "";
-  for (const [group, title, hint] of GROUPS) {
-    const items = st.effects.filter((e) => (e.group || "basic") === group);
+  for (const group of GROUPS) {
+    const items = group === "custom" ? customTiles() : st.effects.filter((e) => (e.group || "basic") === group && e.id !== "custom");
     if (!items.length) continue;
-    const box = el("div", "effect-group", `<h4>${title}${hint ? ` <small>${hint}</small>` : ""}</h4>`);
+    const hint = I18N.ru[`group.${group}Hint`] ? t(`group.${group}Hint`) : "";
+    const box = el("div", "effect-group", `<h4>${t("group." + group)}${hint ? ` <small>${hint}</small>` : ""}</h4>`);
     const grid = el("div", "effect-grid");
     for (const e of items) {
+      if (e.custom !== undefined) { grid.append(customTile(e)); continue; }
       const b = el("button", "effect" + (st.ui.effect === e.id ? " active" : ""));
       const special = specialSwatch(e.id, st.ui.colors);
+      const title = esc(effectTitle(e.id));
       b.innerHTML = special != null
-        ? `<div class="effect-swatch special">${special}</div><span>${e.title}</span>`
-        : `<div class="effect-swatch" style="${effectSwatch(e.id, st.ui.colors)}"></div><span>${e.title}</span>`;
+        ? `<div class="effect-swatch special">${special}</div><span>${title}</span>`
+        : `<div class="effect-swatch" style="${effectSwatch(e.id, st.ui.colors)}"></div><span>${title}</span>`;
       b.onclick = () => selectEffect(e.id);
       grid.append(b);
     }
@@ -411,11 +425,16 @@ function renderEffectExtra() {
   const id = st.ui.effect;
   const err = (st.status.sources || {})[{ music_spectrum: "audio", music_pulse: "audio", music_level: "audio", screen: "screen", reactive: "keyboard", ripple: "keyboard" }[id]];
   if (id === "screen") {
-    const b = el("button", "btn primary", "Настроить области экрана");
+    const b = el("button", "btn primary", t("extra.screen"));
     b.onclick = openScreenEditor;
     box.append(b);
   }
-  if (err) box.append(el("span", "muted", "Ошибка источника: " + esc(err)));
+  if (id === "custom" && st.ui.custom_id && (st.custom_effects || {})[st.ui.custom_id]) {
+    const b = el("button", "btn ghost", t("extra.editCustom"));
+    b.onclick = () => openCustomEditor(st.ui.custom_id);
+    box.append(b);
+  }
+  if (err) box.append(el("span", "muted", t("extra.sourceError", { err: esc(err) })));
 }
 
 function currentEffect() { return st.effects.find((e) => e.id === st.ui.effect) || {}; }
@@ -428,22 +447,20 @@ function renderColors() {
   const box = $("#colorChips");
   box.innerHTML = "";
   const shown = st.ui.colors.slice(0, max);
-  $("#colorHint").textContent = { reactive: "1-й — цвет нажатия, 2-й — фон", ripple: "1-й — цвет волны, 2-й — фон",
-    starry: "звёзды загораются случайными цветами из палитры", music_spectrum: "цвета от низких частот к высоким",
-    music_level: "цвета от тихого к громкому", music_pulse: "цвет меняется на каждый бит" }[st.ui.effect] || "";
+  $("#colorHint").textContent = I18N.ru["hint." + st.ui.effect] ? t("hint." + st.ui.effect) : "";
   if (st.ui.active >= shown.length) st.ui.active = 0;
   shown.forEach((c, i) => {
     const chip = el("div", "chip" + (i === st.ui.active ? " active" : ""));
     chip.style.background = c;
     chip.style.setProperty("--glow", c);
     const inp = el("input");
-    inp.type = "color"; inp.value = c; inp.title = "Нажмите, чтобы выбрать цвет";
+    inp.type = "color"; inp.value = c; inp.title = t("ctl.pickColor");
     inp.onclick = () => { st.ui.active = i; box.querySelectorAll(".chip").forEach((x, j) => x.classList.toggle("active", j === i)); };
     inp.oninput = () => { setColor(i, inp.value, chip); };
     chip.append(inp);
     if (shown.length > 1) {
       const rm = el("button", "rm", "✕");
-      rm.title = "Убрать цвет";
+      rm.title = t("ctl.removeColor");
       rm.onclick = (ev) => { ev.stopPropagation(); st.ui.colors.splice(i, 1); st.ui.active = 0; renderColors(); renderEffects(); applyNow(); };
       chip.append(rm);
     }
@@ -474,8 +491,8 @@ function renderSliders() {
   $("#speed").value = st.ui.speed; $("#speedVal").textContent = st.ui.speed;
   $("#brightness").value = st.ui.brightness; $("#brightVal").textContent = st.ui.brightness + "%";
   $("#reverse").checked = !!st.ui.reverse;
-  $("#speedRow").style.visibility = eff.slider ? "" : "hidden";
-  $("#speedLabel").textContent = eff.slider || "Скорость";
+  $("#speedRow").style.visibility = SLIDER_KEYS[st.ui.effect] ? "" : "hidden";
+  $("#speedLabel").textContent = t(SLIDER_KEYS[st.ui.effect] || "slider.speed");
   $("#reverseRow").style.display = ["wave", "color_wave", "comet", "music_level"].includes(st.ui.effect) ? "" : "none";
 }
 
@@ -484,10 +501,10 @@ function renderModes() {
   list.innerHTML = "";
   const devIds = new Set([...st.selected].map((k) => +k.split(":")[0]));
   const devs = st.devices.filter((d) => devIds.has(d.id));
-  if (!devs.length) { list.append(el("div", "empty", "Выберите устройство слева.")); return; }
+  if (!devs.length) { list.append(el("div", "empty", t("hw.pick"))); return; }
   let modes = devs[0].modes.filter((m) => m.toLowerCase() !== "direct");
   for (const d of devs.slice(1)) modes = modes.filter((m) => d.modes.includes(m));
-  if (!modes.length) { list.append(el("div", "empty", "У выбранных устройств нет общих встроенных режимов. Выберите одно устройство.")); return; }
+  if (!modes.length) { list.append(el("div", "empty", t("hw.none"))); return; }
   const sw = (d) => Object.keys(st.assignments).some((k) => k.split(":")[0] === String(d.id));
   const active = devs.every((d) => d.active_mode === devs[0].active_mode && !sw(d)) ? devs[0].active_mode : null;
   for (const m of modes) {
@@ -499,19 +516,19 @@ function renderModes() {
 
 function renderProfiles() {
   const sel = $("#profileSelect");
-  sel.innerHTML = '<option value="">Профили…</option>' + st.profiles.map((p) => `<option>${esc(p)}</option>`).join("");
+  sel.innerHTML = `<option value="">${t("top.profiles")}</option>` + st.profiles.map((p) => `<option>${esc(p)}</option>`).join("");
   const sp = $("#startupProfile");
-  sp.innerHTML = '<option value="">Не загружать</option>' + st.profiles.map((p) => `<option ${p === st.settings.startup_profile ? "selected" : ""}>${esc(p)}</option>`).join("");
+  sp.innerHTML = `<option value="">${t("set.noProfile")}</option>` + st.profiles.map((p) => `<option ${p === st.settings.startup_profile ? "selected" : ""}>${esc(p)}</option>`).join("");
   const mg = $("#profileManage");
-  mg.innerHTML = st.profiles.length ? "" : '<div class="empty">Пока нет сохранённых профилей.</div>';
+  mg.innerHTML = st.profiles.length ? "" : `<div class="empty">${t("set.noProfiles")}</div>`;
   for (const p of st.profiles) {
     const row = el("div", "profile-item", `<span>${esc(p)}</span>`);
-    const del = el("button", "btn small ghost danger", "Удалить");
+    const del = el("button", "btn small ghost danger", t("common.delete"));
     del.type = "button";
     del.onclick = async () => {
-      if (!confirm(`Удалить профиль «${p}»?`)) return;
+      if (!confirm(t("toast.profileConfirm", { name: p }))) return;
       const r = await api(`/api/profiles/${encodeURIComponent(p)}`, null, "DELETE");
-      st.profiles = r.profiles; renderProfiles(); toast("Профиль удалён");
+      st.profiles = r.profiles; renderProfiles(); toast(t("toast.profileDeleted"));
     };
     row.append(del);
     mg.append(row);
@@ -522,8 +539,12 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 /* ---------- actions ---------- */
 async function applyNow() {
-  if (!st.selected.size) { toast("Сначала выберите устройства слева"); return; }
+  if (!st.selected.size) { toast(t("toast.pickFirst")); return; }
   const cfg = { effect: st.ui.effect, colors: st.ui.colors.slice(0, maxColors(st.ui.effect)), speed: st.ui.speed, brightness: st.ui.brightness, reverse: st.ui.reverse };
+  if (cfg.effect === "custom") {
+    if (!st.ui.custom_id || !(st.custom_effects || {})[st.ui.custom_id]) return;
+    cfg.custom_id = st.ui.custom_id;
+  }
   try {
     let r;
     if (cfg.effect === "screen") {
@@ -543,7 +564,7 @@ async function applyHardware(mode) {
     const r = await api("/api/hardware", { targets: targets(), mode, color: $("#hwColor").value, speed: +$("#hwSpeed").value });
     if (r.errors && r.errors.length) toast(r.errors.join("<br>"), "err");
     await loadState(true);
-    toast(`Режим «${esc(mode)}» включён`, "ok");
+    toast(t("hw.on", { mode: esc(mode) }), "ok");
   } catch (e) { toast(e.message, "err"); }
 }
 
@@ -553,7 +574,7 @@ function openCountFinder(d, z, zi) {
   counting = { device: d.id, zone: zi, name: z.name };
   const dlg = $("#countDlg");
   const start = z.leds || 20;
-  $("#countTitle").textContent = `${z.name}: сколько светодиодов?`;
+  $("#countTitle").textContent = t("count.titleZone", { zone: z.name });
   $("#countRange").max = Math.min(z.max || 300, 300);
   setCount(start);
   dlg.showModal();
@@ -570,7 +591,7 @@ async function finishCount(save) {
   const c = counting; counting = null;
   try {
     const r = await api("/api/zone/test/stop", { device: c.device, zone: c.zone, save: save ? +$("#countRange").value : null });
-    if (save) toast(`«${esc(c.name)}»: ${r.size} LED`, "ok");
+    if (save) toast(t("toast.zoneLeds", { zone: esc(c.name), n: r.size }), "ok");
   } catch (e) { toast(e.message, "err"); }
   $("#countDlg").close();
   loadState(true);
@@ -578,19 +599,19 @@ async function finishCount(save) {
 
 /* ---------- screen layout editor ---------- */
 const PRESETS = {
-  "Весь экран": { x: 0, y: 0, w: 1, h: 1, mode: "avg" },
-  "Верх": { x: 0, y: 0, w: 1, h: 0.15, mode: "h" },
-  "Низ": { x: 0, y: 0.85, w: 1, h: 0.15, mode: "h" },
-  "Лево": { x: 0, y: 0, w: 0.12, h: 1, mode: "v" },
-  "Право": { x: 0.88, y: 0, w: 0.12, h: 1, mode: "v" },
-  "Центр": { x: 0.3, y: 0.3, w: 0.4, h: 0.4, mode: "avg" },
+  full: { x: 0, y: 0, w: 1, h: 1, mode: "avg" },
+  top: { x: 0, y: 0, w: 1, h: 0.15, mode: "h" },
+  bottom: { x: 0, y: 0.85, w: 1, h: 0.15, mode: "h" },
+  left: { x: 0, y: 0, w: 0.12, h: 1, mode: "v" },
+  right: { x: 0.88, y: 0, w: 0.12, h: 1, mode: "v" },
+  center: { x: 0.3, y: 0.3, w: 0.4, h: 0.4, mode: "avg" },
 };
 const TARGET_COLORS = ["#7c5cff", "#00d4ff", "#ff3d7f", "#ffd23d", "#3dff8a", "#ff8a3d", "#c86bff", "#4dd0e1"];
 st.regions = {};
 let screenEd = null;
 
 function regionFor(key) {
-  return st.regions[key] || (st.assignments[key] && st.assignments[key].region) || { ...PRESETS["Весь экран"] };
+  return st.regions[key] || (st.assignments[key] && st.assignments[key].region) || { ...PRESETS.full };
 }
 function keyLabel(key) {
   const [d, z] = key.split(":");
@@ -599,14 +620,14 @@ function keyLabel(key) {
 }
 
 function openScreenEditor() {
-  if (!st.selected.size) { toast("Сначала выберите устройства слева"); return; }
+  if (!st.selected.size) { toast(t("toast.pickFirst")); return; }
   screenEd = { keys: targets(), active: targets()[0], drag: null, grid: null, timer: null };
   $("#monitorSelect").hidden = true;  // shown once we know there is more than one monitor
   for (const k of screenEd.keys) st.regions[k] = { ...regionFor(k) };
   const presets = $("#presetRow");
   presets.innerHTML = "";
   for (const name of Object.keys(PRESETS)) {
-    const b = el("button", "btn small ghost", name);
+    const b = el("button", "btn small ghost", t("preset." + name));
     b.type = "button";
     b.onclick = () => { st.regions[screenEd.active] = { ...PRESETS[name], reverse: $("#regionReverse").checked }; syncRegionInputs(); saveRegions(); };
     presets.append(b);
@@ -654,7 +675,7 @@ async function pollScreen() {
     screenEd.grid = g;
     const sel = $("#monitorSelect");
     if (sel.options.length !== g.monitors.length) {
-      sel.innerHTML = g.monitors.map((m) => `<option value="${m.index}">Монитор ${m.index} · ${m.width}×${m.height}</option>`).join("");
+      sel.innerHTML = g.monitors.map((m) => `<option value="${m.index}">${t("screen.monitorN", { n: m.index, w: m.width, h: m.height })}</option>`).join("");
     }
     sel.value = g.monitor;
     sel.hidden = g.monitors.length < 2;
@@ -759,23 +780,27 @@ function wire() {
   $("#hwColor").onchange = reHw;
 
   $("#rescanBtn").onclick = async () => {
-    try { await api("/api/rescan", {}); await loadState(false); toast("Устройства обновлены", "ok"); }
+    try { await api("/api/rescan", {}); await loadState(false); toast(t("toast.rescanned"), "ok"); }
     catch (e) { toast(e.message, "err"); }
   };
 
   // profiles
   $("#saveProfileBtn").onclick = async () => {
-    const name = prompt("Название профиля:", $("#profileSelect").value || "Мой профиль");
+    const name = prompt(t("toast.profileName"), $("#profileSelect").value || t("toast.profileDefault"));
     if (!name) return;
-    try { const r = await api("/api/profiles", { name }); st.profiles = r.profiles; renderProfiles(); $("#profileSelect").value = name.trim(); toast(`Профиль «${esc(name)}» сохранён`, "ok"); }
+    try { const r = await api("/api/profiles", { name }); st.profiles = r.profiles; renderProfiles(); $("#profileSelect").value = name.trim(); toast(t("toast.profileSaved", { name: esc(name) }), "ok"); }
     catch (e) { toast(e.message, "err"); }
   };
   $("#profileSelect").onchange = async (e) => {
     const name = e.target.value;
     if (!name) return;
-    try { await api(`/api/profiles/${encodeURIComponent(name)}/load`, {}); await loadState(true); toast(`Загружен профиль «${esc(name)}»`, "ok"); }
+    try { await api(`/api/profiles/${encodeURIComponent(name)}/load`, {}); await loadState(true); toast(t("toast.profileLoaded", { name: esc(name) }), "ok"); }
     catch (err) { toast(err.message, "err"); }
   };
+
+  // language + custom effects
+  document.querySelectorAll("#langSwitch [data-lang]").forEach((b) => { b.onclick = () => setLanguage(b.dataset.lang); });
+  wireCustomEditor();
 
   // LED count finder
   $("#countRange").oninput = (e) => setCount(+e.target.value);
@@ -824,28 +849,30 @@ function wire() {
   $("#restartEngineBtn").onclick = () => { dlg.close(); reconnect(); };
   $("#connectBtn").onclick = async () => {
     const btn = $("#connectBtn");
-    btn.disabled = true; btn.textContent = "Подключаюсь…";
+    btn.disabled = true; btn.textContent = t("engine.connecting");
     try {
       const r = await api("/api/connect", { host: $("#hostInput").value, port: +$("#portInput").value });
       await loadState(false);
-      if (r.ok) { toast(`Подключено: найдено устройств — ${st.devices.length}`, "ok"); dlg.close(); }
-      else toast(r.status.error || "Не удалось подключиться", "err");
-    } finally { btn.disabled = false; btn.textContent = "Подключиться"; }
+      if (r.ok) { toast(t("toast.connected", { n: st.devices.length }), "ok"); dlg.close(); }
+      else toast(r.status.error || t("toast.connectFail"), "err");
+    } finally { btn.disabled = false; btn.textContent = t("engine.connect"); }
   };
-  $("#demoBtn").onclick = async () => { await api("/api/connect", { demo: true }); await loadState(false); dlg.close(); toast("Включён демо-режим"); };
+  $("#demoBtn").onclick = async () => { await api("/api/connect", { demo: true }); await loadState(false); dlg.close(); toast(t("toast.demoOn")); };
   $("#autostart").onchange = async (e) => {
-    try { const r = await api("/api/autostart", { enabled: e.target.checked }); e.target.checked = r.enabled; toast(r.enabled ? "Автозапуск включён" : "Автозапуск выключен", "ok"); }
+    try { const r = await api("/api/autostart", { enabled: e.target.checked }); e.target.checked = r.enabled; toast(r.enabled ? t("toast.autostartOn") : t("toast.autostartOff"), "ok"); }
     catch (err) { e.target.checked = !e.target.checked; toast(err.message, "err"); }
   };
-  $("#startupProfile").onchange = (e) => api("/api/settings", { startup_profile: e.target.value }).then((r) => { st.settings = r.settings; toast("Сохранено", "ok"); });
+  $("#startupProfile").onchange = (e) => api("/api/settings", { startup_profile: e.target.value }).then((r) => { st.settings = r.settings; toast(t("toast.saved"), "ok"); });
 }
 
+LANG = detectLang();
+applyI18n();
 wire();
 loadState(false).then(() => {
   // first launch: give the user something alive to look at
   if (!Object.keys(st.assignments).length && st.status.phase === "demo") applyNow();
   pollFrame();
-}).catch((e) => toast("Сервер недоступен: " + e.message, "err"));
+}).catch((e) => toast(t("toast.serverDown", { err: e.message }), "err"));
 // follow engine start-up and device discovery
 async function pollStatus() {
   try {

@@ -19,7 +19,10 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import effects
+import lang
 import openrgb_runtime as rt
+from lang import tr
 from effects import EFFECTS, EffectEngine, rgb_to_hex
 from rgb_backend import DemoBackend, OpenRGBBackend
 
@@ -28,7 +31,7 @@ DATA = Path(os.environ.get("APPDATA", rt.app_dir())) / "RGBStudio"
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
 PROFILES_FILE = DATA / "profiles.json"
-APP_VERSION = "1.0.0"  # keep in sync with UI_VERSION in static/app.js
+APP_VERSION = "1.1.0"  # keep in sync with UI_VERSION in static/app.js
 TASK_NAME = "RGB Studio"
 PORT_SPAN = 20  # ports tried after the default one
 DEFAULT_HEADER_LEDS = 40
@@ -41,6 +44,8 @@ DEFAULT_SETTINGS = {
     "zone_sizes": {},  # device name -> {zone name: LED count} for addressable headers
     "monitor": 1,
     "last_lighting": {},  # snapshot restored on the next start when no startup profile is set
+    "language": "",       # "", "ru" or "en"; empty = follow the system
+    "custom_effects": {},  # id -> user-built effect definition
 }
 
 
@@ -59,6 +64,8 @@ def save_json(path, data):
 
 settings = {**DEFAULT_SETTINGS, **load_json(SETTINGS_FILE, {})}
 profiles = load_json(PROFILES_FILE, {})
+lang.current["lang"] = settings.get("language", "")
+effects.CUSTOM_EFFECTS = settings["custom_effects"]
 state = {"backend": DemoBackend(), "phase": "starting", "error": None, "version": 0, "port": 6750}
 runtime = rt.OpenRGBRuntime(settings["host"], settings["port"], DATA / "engine")
 
@@ -93,7 +100,7 @@ def connect_openrgb():
             last_exc = exc
             time.sleep(0.5)
     else:
-        state["phase"], state["error"] = "demo", f"Не удалось подключиться к движку: {last_exc}"
+        state["phase"], state["error"] = "demo", tr(f"Не удалось подключиться к движку: {last_exc}", f"Couldn't connect to the engine: {last_exc}")
         set_backend(DemoBackend())
         return False
     apply_zone_sizes()
@@ -165,11 +172,11 @@ def parse_key(key):
     dev = int(dev)
     devices = state["backend"].devices
     if not 0 <= dev < len(devices):
-        raise ValueError(f"Нет устройства {dev}")
+        raise ValueError(tr(f"Нет устройства {dev}", f"No device {dev}"))
     if zone != "":
         zone = int(zone)
         if not 0 <= zone < len(devices[dev]["zones"]):
-            raise ValueError(f"Нет зоны {zone}")
+            raise ValueError(tr(f"Нет зоны {zone}", f"No zone {zone}"))
         return dev, zone
     return dev, None
 
@@ -196,7 +203,7 @@ def devices_of(keys):
 def effect_cfg(body):
     effect = body.get("effect", "static")
     if effect not in EFFECTS:
-        raise ValueError("Неизвестный эффект")
+        raise ValueError(tr("Неизвестный эффект", "Unknown effect"))
     cfg = {
         "effect": effect,
         "colors": body.get("colors") or ["#ffffff"],
@@ -204,6 +211,10 @@ def effect_cfg(body):
         "brightness": int(body.get("brightness", 100)),
         "reverse": bool(body.get("reverse", False)),
     }
+    if effect == "custom":
+        if body.get("custom_id") not in settings["custom_effects"]:
+            raise ValueError(tr("Такого эффекта нет", "No such effect"))
+        cfg["custom_id"] = body["custom_id"]
     region = body.get("region")
     if isinstance(region, dict):
         cfg["region"] = {k: region[k] for k in ("x", "y", "w", "h", "mode", "reverse") if k in region}
@@ -308,6 +319,7 @@ def api_state():
                      "source": v[4], "slider": v[5]} for k, v in EFFECTS.items()],
         "settings": settings,
         "profiles": sorted(profiles),
+        "custom_effects": settings["custom_effects"],
     })
 
 
@@ -350,6 +362,56 @@ def api_hardware():
             errors.append(f'{backend.devices[dev_id]["name"]}: {exc}')
     remember_lighting()
     return jsonify({"ok": not errors, "errors": errors})
+
+
+# ---------- user-built effects
+
+def clean_custom(body):
+    """Validate a custom effect definition coming from the editor."""
+    import re
+    is_hex = re.compile(r"^#[0-9a-fA-F]{6}$").match
+    frames = []
+    for f in (body.get("frames") or [])[:16]:
+        stops = [{"pos": min(1.0, max(0.0, float(x["pos"]))), "color": x["color"].lower()}
+                 for x in (f.get("stops") or [])[:8] if is_hex(str(x.get("color", "")))]
+        if stops:
+            frames.append({"t": min(0.999, max(0.0, float(f.get("t", 0)))), "stops": stops})
+    if not frames:
+        raise ValueError(tr("В эффекте нет ни одного кадра", "The effect has no frames"))
+    return {
+        "name": (str(body.get("name") or "").strip() or "Effect")[:40],
+        "duration": min(20.0, max(0.3, float(body.get("duration", 3)))),
+        "scroll": int(min(100, max(-100, float(body.get("scroll", 0))))),
+        "ease": "step" if body.get("ease") == "step" else "smooth",
+        "hard": bool(body.get("hard")),
+        "frames": frames,
+    }
+
+
+@app.post("/api/custom")
+def api_custom_save():
+    import uuid
+    body = request.get_json(force=True)
+    try:
+        defn = clean_custom(body)
+    except (ValueError, TypeError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    cid = body.get("id") if body.get("id") in settings["custom_effects"] else uuid.uuid4().hex[:8]
+    settings["custom_effects"][cid] = defn
+    save_json(SETTINGS_FILE, settings)
+    engine.mark_all_dirty()
+    return jsonify({"ok": True, "id": cid, "custom_effects": settings["custom_effects"]})
+
+
+@app.delete("/api/custom/<cid>")
+def api_custom_delete(cid):
+    settings["custom_effects"].pop(cid, None)
+    for key, cfg in list(engine.assignments.items()):
+        if cfg.get("custom_id") == cid:
+            engine.assign(key, effect_cfg({"effect": "off"}))
+    save_json(SETTINGS_FILE, settings)
+    remember_lighting()
+    return jsonify({"ok": True, "custom_effects": settings["custom_effects"]})
 
 
 # ---------- LED count finder: light the first N LEDs of a header so the user sees where it ends
@@ -469,14 +531,14 @@ def api_zone():
     body = request.get_json(force=True)
     backend = state["backend"]
     if not hasattr(backend, "resize_zone"):
-        return jsonify({"error": "В демо-режиме размер зон не меняется"}), 400
+        return jsonify({"error": tr("В демо-режиме размер зон не меняется", "Zone sizes can't be changed in demo mode")}), 400
     dev_id, zone_idx = int(body["device"]), int(body["zone"])
     try:
         dev = backend.devices[dev_id]
         zone_name = dev["zones"][zone_idx]["name"]
         size = backend.resize_zone(dev_id, zone_idx, body["size"])
     except Exception as exc:
-        return jsonify({"error": f"Не удалось изменить зону: {exc}"}), 500
+        return jsonify({"error": tr(f"Не удалось изменить зону: {exc}", f"Couldn't change the zone: {exc}")}), 500
     settings["zone_sizes"].setdefault(dev["name"], {})[zone_name] = size
     save_json(SETTINGS_FILE, settings)
     engine.mark_all_dirty()
@@ -520,7 +582,7 @@ def api_autostart_set():
     try:
         set_autostart(on)
     except Exception as exc:
-        return jsonify({"error": f"Не удалось изменить автозапуск: {exc}"}), 500
+        return jsonify({"error": tr(f"Не удалось изменить автозапуск: {exc}", f"Couldn't change autostart: {exc}")}), 500
     return jsonify({"enabled": autostart_enabled()})
 
 
@@ -530,6 +592,11 @@ def api_settings():
     for key in ("brightness", "startup_profile"):
         if key in body:
             settings[key] = body[key]
+    if body.get("language") in ("", "ru", "en"):
+        settings["language"] = lang.current["lang"] = body["language"]
+        tray = state.get("tray")
+        if tray:
+            tray.update_menu()
     settings["brightness"] = max(0, min(100, int(settings["brightness"])))
     save_json(SETTINGS_FILE, settings)
     engine.mark_all_dirty()
@@ -540,7 +607,7 @@ def api_settings():
 def api_profile_save():
     name = (request.get_json(force=True).get("name") or "").strip()
     if not name:
-        return jsonify({"error": "Введите название профиля"}), 400
+        return jsonify({"error": tr("Введите название профиля", "Enter a profile name")}), 400
     profiles[name] = {"devices": snapshot_by_name()}
     save_json(PROFILES_FILE, profiles)
     return jsonify({"ok": True, "profiles": sorted(profiles)})
@@ -549,7 +616,7 @@ def api_profile_save():
 @app.post("/api/profiles/<name>/load")
 def api_profile_load(name):
     if name not in profiles:
-        return jsonify({"error": "Профиль не найден"}), 404
+        return jsonify({"error": tr("Профиль не найден", "Profile not found")}), 404
     apply_profile(profiles[name])
     remember_lighting()
     return jsonify({"ok": True})
@@ -610,8 +677,8 @@ def make_icon():
 def run_tray():
     import pystray
     menu = pystray.Menu(
-        pystray.MenuItem("Открыть RGB Studio", lambda: open_window(), default=True),
-        pystray.MenuItem("Выход", lambda: shutdown()),
+        pystray.MenuItem(lambda item: tr("Открыть RGB Studio", "Open RGB Studio"), lambda: open_window(), default=True),
+        pystray.MenuItem(lambda item: tr("Выход", "Exit"), lambda: shutdown()),
     )
     icon = pystray.Icon("RGB Studio", make_icon(), "RGB Studio", menu)
     state["tray"] = icon
@@ -671,15 +738,15 @@ def bind_server(base):
             return make_server("127.0.0.1", port, app, threaded=True), port
         except (OSError, SystemExit):
             continue
-    raise SystemExit(f"Нет свободного порта в диапазоне {base}-{base + PORT_SPAN - 1}")
+    raise SystemExit(f"No free port in {base}-{base + PORT_SPAN - 1}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="RGB Studio")
     parser.add_argument("--port", type=int, default=6750)
-    parser.add_argument("--no-window", action="store_true", help="только сервер, без окна и трея")
-    parser.add_argument("--minimized", action="store_true", help="запуск в трей без окна")
-    parser.add_argument("--demo", action="store_true", help="виртуальные устройства, без движка")
+    parser.add_argument("--no-window", action="store_true", help="server only, no window or tray")
+    parser.add_argument("--minimized", action="store_true", help="start in the tray without a window")
+    parser.add_argument("--demo", action="store_true", help="virtual devices, no engine")
     parser.add_argument("--restarted", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -693,7 +760,7 @@ def main():
     if running is not None:
         state["port"] = running
         if args.no_window:
-            print(f"RGB Studio уже запущена: http://127.0.0.1:{running}")
+            print(f"RGB Studio is already running: http://127.0.0.1:{running}")
         else:
             open_window()
         return

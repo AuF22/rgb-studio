@@ -6,6 +6,8 @@ Both expose the same small interface used by the effect engine.
 """
 import threading
 
+from lang import tr
+
 DEVICE_TYPES = {
     0: "motherboard", 1: "ram", 2: "gpu", 3: "cooler", 4: "ledstrip",
     5: "keyboard", 6: "mouse", 7: "mousemat", 8: "headset", 9: "headset_stand",
@@ -43,13 +45,14 @@ class DemoBackend(BaseBackend):
     kind = "demo"
 
     LAYOUT = [
-        ("ASUS ROG STRIX B650-A", "motherboard", [("Подсветка платы", 6), ("ARGB разъём 1", 24)]),
-        ("Kingston FURY Beast DDR5 #1", "ram", [("Планка", 8)]),
-        ("Kingston FURY Beast DDR5 #2", "ram", [("Планка", 8)]),
-        ("NVIDIA GeForce RTX 4070", "gpu", [("Логотип", 4), ("Боковая полоса", 10)]),
-        ("Lian Li UNI FAN SL120 x3", "cooler", [("Вентилятор 1", 16), ("Вентилятор 2", 16), ("Вентилятор 3", 16)]),
-        ("HyperX Alloy Origins", "keyboard", [("Клавиши", 87)]),
-        ("Logitech G502", "mouse", [("Логотип", 1), ("Полоса", 1)]),
+        # zone names in English, like the names real hardware reports through OpenRGB
+        ("ASUS ROG STRIX B650-A", "motherboard", [("Aura Mainboard", 6), ("ARGB Header 1", 24)]),
+        ("Kingston FURY Beast DDR5 #1", "ram", [("DRAM", 8)]),
+        ("Kingston FURY Beast DDR5 #2", "ram", [("DRAM", 8)]),
+        ("NVIDIA GeForce RTX 4070", "gpu", [("Logo", 4), ("Side strip", 10)]),
+        ("Lian Li UNI FAN SL120 x3", "cooler", [("Fan 1", 16), ("Fan 2", 16), ("Fan 3", 16)]),
+        ("HyperX Alloy Origins", "keyboard", [("Keyboard", 87)]),
+        ("Logitech G502", "mouse", [("Logo", 1), ("Strip", 1)]),
     ]
     MODES = ["Direct", "Static", "Breathing", "Spectrum Cycle", "Rainbow Wave", "Off"]
     KEY_ROWS = [
@@ -194,7 +197,7 @@ class OpenRGBBackend(BaseBackend):
         self._direct.discard(dev_id)
         mode = next((m for m in dev.modes if m.name == mode_name), None)
         if mode is None:
-            raise ValueError(f"У устройства нет режима «{mode_name}»")
+            raise ValueError(tr(f"У устройства нет режима «{mode_name}»", f"The device has no “{mode_name}” mode"))
         from openrgb.utils import ModeFlags
         if speed is not None and ModeFlags.HAS_SPEED in mode.flags and mode.speed_min is not None:
             lo, hi = mode.speed_min, mode.speed_max

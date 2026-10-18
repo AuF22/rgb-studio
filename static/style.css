@@ -291,3 +291,28 @@ dialog.wide-dlg { width: min(1040px, calc(100vw - 32px)); }
 .screen-target i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (max-width: 860px) { .screen-wrap { grid-template-columns: 1fr; } }
+
+/* language switch */
+.lang-switch { display: flex; gap: 8px; }
+.lang-switch .btn.active { border-color: var(--accent); background: rgba(124, 92, 255, .15); }
+
+/* custom effects */
+.effect-new .new-swatch { display: grid; place-items: center; border: 2px dashed var(--line); background: none; color: var(--muted); font-size: 22px; }
+.effect-new:hover .new-swatch { border-color: var(--accent); color: var(--text); }
+.ce-top { display: flex; gap: 12px; }
+.ce-top .narrow-2 { flex: 0 0 220px; }
+.ce-preview { width: 100%; height: 44px; border-radius: 10px; background: #07080d; border: 1px solid var(--line); }
+.ce-section { display: flex; flex-direction: column; gap: 10px; }
+.ce-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ce-head-btns { display: flex; gap: 6px; }
+.ce-timeline { position: relative; height: 34px; border-radius: 10px; background: repeating-linear-gradient(90deg, var(--bg-2) 0 calc(10% - 1px), var(--line) calc(10% - 1px) 10%); border: 1px solid var(--line); }
+.ce-key { position: absolute; top: 4px; width: 22px; height: 24px; margin-left: -11px; border-radius: 6px; border: 2px solid rgba(255, 255, 255, .35); cursor: pointer; padding: 0; }
+.ce-key.active { border-color: #fff; box-shadow: 0 0 0 3px rgba(124, 92, 255, .5); z-index: 2; }
+.ce-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: .6; pointer-events: none; }
+.ce-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.ce-gradient { height: 22px; border-radius: 8px; border: 1px solid var(--line); }
+.ce-stops { display: flex; flex-direction: column; gap: 6px; max-height: 210px; overflow-y: auto; }
+.ce-stop { display: grid; grid-template-columns: 40px 1fr 44px 34px; gap: 8px; align-items: center; }
+.ce-stop input[type=color] { width: 40px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); padding: 2px; cursor: pointer; }
+.ce-stop .muted { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) { .ce-grid { grid-template-columns: 1fr; } .ce-top { flex-direction: column; } .ce-top .narrow-2 { flex: none; } }
