@@ -25,6 +25,7 @@ const TYPE_NAMES = {
   keyboard: "Клавиатура", mouse: "Мышь", ledstrip: "LED-лента", headset: "Гарнитура", case: "Корпус",
   mousemat: "Коврик", light: "Светильник", speaker: "Колонки", storage: "Накопитель", accessory: "Устройство",
 };
+const UI_VERSION = "1.3";  // keep in sync with APP_VERSION in app.py
 const SWATCHES = ["#ff0040", "#ff6a00", "#ffd000", "#00ff6a", "#00e5ff", "#0066ff", "#7c5cff", "#ff00d4", "#ffffff", "#ffb380"];
 
 const st = {
@@ -98,6 +99,8 @@ const bannerHidden = new Set();
 
 function bannerFor(s) {
   const e = s.engine || {};
+  if (st.app_version !== UI_VERSION) return { kind: "err", key: "version",
+    text: "Работает старая копия RGB Studio, а интерфейс уже новый, поэтому часть функций не видна. Закройте её: значок у часов → «Выход», затем снова запустите RGB Studio." };
   if (s.phase === "starting") return { kind: "info", key: "starting", text: "Запускаю движок подсветки и ищу устройства… Это занимает до 20 секунд." };
   if (s.mode === "demo") {
     if (s.error) return { kind: "err", key: "fail", text: `Движок подсветки не запустился: ${s.error}. Показаны демо-устройства.`, action: "Повторить", run: reconnect };
@@ -370,7 +373,7 @@ function renderEffects() {
   const root = $("#effectGrid");
   root.innerHTML = "";
   for (const [group, title, hint] of GROUPS) {
-    const items = st.effects.filter((e) => e.group === group);
+    const items = st.effects.filter((e) => (e.group || "basic") === group);
     if (!items.length) continue;
     const box = el("div", "effect-group", `<h4>${title}${hint ? ` <small>${hint}</small>` : ""}</h4>`);
     const grid = el("div", "effect-grid");

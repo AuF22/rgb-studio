@@ -28,6 +28,7 @@ DATA = Path(os.environ.get("APPDATA", rt.app_dir())) / "RGBStudio"
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
 PROFILES_FILE = DATA / "profiles.json"
+APP_VERSION = "1.3"  # keep in sync with UI_VERSION in static/app.js
 TASK_NAME = "RGB Studio"
 PORT_SPAN = 20  # ports tried after the default one
 DEFAULT_HEADER_LEDS = 40
@@ -293,13 +294,14 @@ def index():
 
 @app.get("/api/ping")
 def api_ping():
-    return jsonify({"app": "rgb-studio"})
+    return jsonify({"app": "rgb-studio", "version": APP_VERSION})
 
 
 @app.get("/api/state")
 def api_state():
     return jsonify({
         "status": status(),
+        "app_version": APP_VERSION,
         "devices": [] if state["phase"] == "starting" else state["backend"].describe(),
         "assignments": dict(engine.assignments),
         "effects": [{"id": k, "title": v[0], "group": v[1], "colors": v[2], "animated": v[3],
