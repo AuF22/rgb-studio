@@ -1,34 +1,41 @@
-"""RGB Studio — simple, friendly lighting control on top of the OpenRGB SDK server.
+"""RGB Studio — simple, friendly lighting control. Ships its own OpenRGB engine and runs it invisibly.
 
-Run:  py app.py            (opens a desktop window)
-      py app.py --no-window (server only, open http://127.0.0.1:6750)
+Run:  py app.py              (window + tray icon)
+      py app.py --minimized  (tray only, used for autostart)
+      py app.py --no-window  (server only, open http://127.0.0.1:6750)
+      py app.py --demo       (virtual devices, no engine)
 """
 import argparse
 import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
+import time
+import urllib.request
 import webbrowser
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import openrgb_runtime as rt
 from effects import EFFECTS, EffectEngine, rgb_to_hex
 from rgb_backend import DemoBackend, OpenRGBBackend
 
-BASE = Path(__file__).resolve().parent
-DATA = Path(os.environ.get("APPDATA", BASE)) / "RGBStudio"
+RES = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+DATA = Path(os.environ.get("APPDATA", rt.app_dir())) / "RGBStudio"
 DATA.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA / "settings.json"
 PROFILES_FILE = DATA / "profiles.json"
+TASK_NAME = "RGB Studio"
 
 DEFAULT_SETTINGS = {
     "host": "127.0.0.1",
     "port": 6742,
     "brightness": 100,
     "startup_profile": "",
-    "demo_fallback": True,
+    "zone_sizes": {},  # device name -> {zone name: LED count} for addressable headers
 }
 
 
@@ -47,35 +54,95 @@ def save_json(path, data):
 
 settings = {**DEFAULT_SETTINGS, **load_json(SETTINGS_FILE, {})}
 profiles = load_json(PROFILES_FILE, {})
-state = {"backend": DemoBackend(), "connect_error": None}
+state = {"backend": DemoBackend(), "phase": "starting", "error": None, "version": 0, "port": 6750}
+runtime = rt.OpenRGBRuntime(settings["host"], settings["port"], DATA / "engine")
 
 engine = EffectEngine(lambda: state["backend"], lambda: settings["brightness"])
-app = Flask(__name__, static_folder=str(BASE / "static"), static_url_path="/static")
+app = Flask(__name__, static_folder=str(RES / "static"), static_url_path="/static")
 
 
-def connect(host=None, port=None, allow_demo=True):
-    host = host or settings["host"]
-    port = int(port or settings["port"])
+def set_backend(backend):
     engine.reset()
-    old = state["backend"]
-    try:
-        state["backend"] = OpenRGBBackend(host, port)
-        state["connect_error"] = None
-    except Exception as exc:
-        state["connect_error"] = f"Не удалось подключиться к OpenRGB на {host}:{port} — {exc}"
-        state["backend"] = DemoBackend() if allow_demo else old
-    if old is not state["backend"]:
+    old, state["backend"] = state["backend"], backend
+    if old is not backend:
         old.close()
-    return state["backend"].kind == "openrgb"
+    state["version"] += 1
+
+
+def connect_openrgb():
+    """Start (or find) the engine and connect to it. Falls back to demo devices on failure."""
+    state["phase"], state["error"] = "starting", None
+    state["version"] += 1
+    runtime.host, runtime.port = settings["host"], int(settings["port"])
+    if not runtime.start():
+        state["phase"], state["error"] = "demo", runtime.error
+        set_backend(DemoBackend())
+        return False
+    last_exc = None
+    for _ in range(20):  # the server can accept connections a moment before it answers
+        try:
+            set_backend(OpenRGBBackend(runtime.host, runtime.port))
+            break
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(0.5)
+    else:
+        state["phase"], state["error"] = "demo", f"Не удалось подключиться к движку: {last_exc}"
+        set_backend(DemoBackend())
+        return False
+    apply_zone_sizes()
+    state["phase"] = "ready"
+    start = settings.get("startup_profile")
+    if start in profiles:
+        apply_profile(profiles[start])
+    threading.Thread(target=settle_devices, daemon=True).start()
+    return True
+
+
+def settle_devices():
+    """Devices keep appearing for a few seconds while the engine scans; pick them up."""
+    backend = state["backend"]
+    for _ in range(10):
+        time.sleep(2)
+        if state["backend"] is not backend:
+            return
+        before = len(backend.devices)
+        try:
+            backend.rescan()
+        except Exception:
+            return
+        if len(backend.devices) != before:
+            apply_zone_sizes()
+            engine.mark_all_dirty()
+            state["version"] += 1
+
+
+def apply_zone_sizes():
+    """Re-apply the LED counts the user set for addressable headers (the engine forgets them)."""
+    backend = state["backend"]
+    if not hasattr(backend, "resize_zone"):
+        return
+    for dev in list(backend.devices):
+        wanted = settings["zone_sizes"].get(dev["name"], {})
+        for idx, zone in enumerate(dev["zones"]):
+            size = wanted.get(zone["name"])
+            if zone["resizable"] and size is not None and size != zone["leds"]:
+                try:
+                    backend.resize_zone(dev["id"], idx, size)
+                except Exception:
+                    pass
 
 
 def status():
     b = state["backend"]
     return {
         "mode": b.kind,
+        "phase": state["phase"],
         "host": settings["host"],
         "port": settings["port"],
-        "error": state["connect_error"] or engine.last_error,
+        "error": state["error"] or engine.last_error,
+        "version": state["version"],
+        "engine": runtime.info(),
     }
 
 
@@ -102,9 +169,8 @@ def effect_cfg(body):
 
 def snapshot_by_name():
     """Current lighting keyed by device name (ids can change between sessions)."""
-    devs = state["backend"].devices
     out = {}
-    for d in devs:
+    for d in state["backend"].devices:
         cfg = engine.assignments.get(d["id"])
         if cfg:
             out[d["name"]] = {"kind": "effect", **cfg}
@@ -130,23 +196,59 @@ def apply_profile(data):
             engine.assign(dev_id, effect_cfg(cfg))
 
 
+# ---------- autostart (Task Scheduler, so it starts elevated without a UAC prompt) ----------
+
+def launch_command():
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --minimized'
+    pyw = Path(sys.executable).with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else sys.executable}" "{Path(__file__).resolve()}" --minimized'
+
+
+def autostart_enabled():
+    r = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True,
+                       creationflags=rt.CREATE_NO_WINDOW)
+    return r.returncode == 0
+
+
+def set_autostart(on):
+    if on:
+        args = ["schtasks", "/Create", "/TN", TASK_NAME, "/TR", launch_command(),
+                "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"]
+    else:
+        args = ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
+    r = subprocess.run(args, capture_output=True, text=True, creationflags=rt.CREATE_NO_WINDOW)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip() or "schtasks error")
+
+
 # ---------- routes ----------
 
 @app.get("/")
 def index():
-    return send_from_directory(BASE / "static", "index.html")
+    return send_from_directory(RES / "static", "index.html")
+
+
+@app.get("/api/ping")
+def api_ping():
+    return jsonify({"app": "rgb-studio"})
 
 
 @app.get("/api/state")
 def api_state():
     return jsonify({
         "status": status(),
-        "devices": state["backend"].describe(),
+        "devices": [] if state["phase"] == "starting" else state["backend"].describe(),
         "assignments": {str(k): v for k, v in engine.assignments.items()},
         "effects": [{"id": k, "title": v[0], "colors": v[1], "animated": v[2]} for k, v in EFFECTS.items()],
         "settings": settings,
         "profiles": sorted(profiles),
     })
+
+
+@app.get("/api/status")
+def api_status():
+    return jsonify(status())
 
 
 @app.get("/api/frame")
@@ -187,17 +289,17 @@ def api_hardware():
 def api_connect():
     body = request.get_json(force=True) or {}
     if body.get("demo"):
-        engine.reset()
-        state["backend"].close()
-        state["backend"] = DemoBackend()
-        state["connect_error"] = None
+        runtime.stop()
+        state["phase"], state["error"] = "demo", None
+        set_backend(DemoBackend())
         return jsonify({"ok": True, "status": status()})
     if "host" in body:
         settings["host"] = body["host"].strip() or "127.0.0.1"
     if "port" in body:
         settings["port"] = int(body["port"])
     save_json(SETTINGS_FILE, settings)
-    ok = connect(allow_demo=settings["demo_fallback"])
+    runtime.stop()
+    ok = connect_openrgb()
     return jsonify({"ok": ok, "status": status()})
 
 
@@ -210,13 +312,74 @@ def api_rescan():
             backend.rescan()
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500
+        state["version"] += 1
     return jsonify({"ok": True})
+
+
+@app.post("/api/zone")
+def api_zone():
+    body = request.get_json(force=True)
+    backend = state["backend"]
+    if not hasattr(backend, "resize_zone"):
+        return jsonify({"error": "В демо-режиме размер зон не меняется"}), 400
+    dev_id, zone_idx = int(body["device"]), int(body["zone"])
+    try:
+        dev = backend.devices[dev_id]
+        zone_name = dev["zones"][zone_idx]["name"]
+        size = backend.resize_zone(dev_id, zone_idx, body["size"])
+    except Exception as exc:
+        return jsonify({"error": f"Не удалось изменить зону: {exc}"}), 500
+    settings["zone_sizes"].setdefault(dev["name"], {})[zone_name] = size
+    save_json(SETTINGS_FILE, settings)
+    engine.mark_all_dirty()
+    state["version"] += 1
+    return jsonify({"ok": True, "size": size})
+
+
+@app.post("/api/elevate")
+def api_elevate():
+    """Relaunch the whole app with administrator rights (needed for RAM / motherboard)."""
+    if getattr(sys, "frozen", False):
+        exe, params = sys.executable, "--restarted"
+    else:
+        exe, params = sys.executable, f'"{Path(__file__).resolve()}" --restarted'
+    try:
+        shutdown(restart_elevated=(exe, params))
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
+    return jsonify({"ok": True})
+
+
+@app.post("/api/pawnio/install")
+def api_pawnio():
+    try:
+        reboot = rt.install_pawnio()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    runtime.stop()
+    threading.Thread(target=connect_openrgb, daemon=True).start()
+    return jsonify({"ok": True, "reboot": reboot})
+
+
+@app.get("/api/autostart")
+def api_autostart_get():
+    return jsonify({"enabled": autostart_enabled()})
+
+
+@app.post("/api/autostart")
+def api_autostart_set():
+    on = bool(request.get_json(force=True).get("enabled"))
+    try:
+        set_autostart(on)
+    except Exception as exc:
+        return jsonify({"error": f"Не удалось изменить автозапуск: {exc}"}), 500
+    return jsonify({"enabled": autostart_enabled()})
 
 
 @app.post("/api/settings")
 def api_settings():
     body = request.get_json(force=True)
-    for key in ("brightness", "startup_profile", "demo_fallback"):
+    for key in ("brightness", "startup_profile"):
         if key in body:
             settings[key] = body[key]
     settings["brightness"] = max(0, min(100, int(settings["brightness"])))
@@ -253,10 +416,11 @@ def api_profile_delete(name):
     return jsonify({"ok": True, "profiles": sorted(profiles)})
 
 
-# ---------- launcher ----------
+# ---------- window, tray, lifecycle ----------
 
-def open_window(url):
+def open_window():
     """Open the UI as a standalone app window (Edge/Chrome app mode), else a browser tab."""
+    url = f"http://127.0.0.1:{state['port']}"
     candidates = [
         shutil.which("msedge"),
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -266,31 +430,93 @@ def open_window(url):
     ]
     for exe in candidates:
         if exe and os.path.exists(exe):
-            profile = DATA / "window"
             subprocess.Popen([exe, f"--app={url}", "--window-size=1280,820",
-                              f"--user-data-dir={profile}"])
+                              f"--user-data-dir={DATA / 'window'}"])
             return
     webbrowser.open(url)
+
+
+def shutdown(restart_elevated=None):
+    if restart_elevated:
+        rt.run_elevated(*restart_elevated)  # raises if the user declines UAC; then we keep running
+    engine.stop()
+    runtime.stop()
+    tray = state.get("tray")
+    if tray:
+        tray.stop()
+    threading.Timer(0.3, lambda: os._exit(0)).start()
+
+
+def make_icon():
+    from PIL import Image, ImageDraw
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    colors = [(255, 61, 127), (255, 229, 61), (61, 255, 138), (61, 213, 255), (124, 92, 255)]
+    for i, c in enumerate(colors):
+        d.arc((6, 6, 58, 58), start=i * 72 - 90, end=(i + 1) * 72 - 90, fill=c, width=12)
+    return img
+
+
+def run_tray():
+    import pystray
+    menu = pystray.Menu(
+        pystray.MenuItem("Открыть RGB Studio", lambda: open_window(), default=True),
+        pystray.MenuItem("Выход", lambda: shutdown()),
+    )
+    icon = pystray.Icon("RGB Studio", make_icon(), "RGB Studio", menu)
+    state["tray"] = icon
+    icon.run()
+
+
+def already_running(port):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=0.5) as r:
+            return json.load(r).get("app") == "rgb-studio"
+    except Exception:
+        return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="RGB Studio")
     parser.add_argument("--port", type=int, default=6750)
-    parser.add_argument("--no-window", action="store_true")
-    parser.add_argument("--demo", action="store_true", help="не подключаться к OpenRGB")
+    parser.add_argument("--no-window", action="store_true", help="только сервер, без окна и трея")
+    parser.add_argument("--minimized", action="store_true", help="запуск в трей без окна")
+    parser.add_argument("--demo", action="store_true", help="виртуальные устройства, без движка")
+    parser.add_argument("--restarted", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    state["port"] = args.port
 
-    if not args.demo:
-        connect(allow_demo=True)
-    start = settings.get("startup_profile")
-    if start in profiles:
-        apply_profile(profiles[start])
+    if args.restarted:  # give the previous instance time to release its ports
+        for _ in range(40):
+            if not already_running(args.port):
+                break
+            time.sleep(0.25)
 
-    url = f"http://127.0.0.1:{args.port}"
-    if not args.no_window:
-        threading.Timer(0.8, open_window, args=(url,)).start()
-    print(f"RGB Studio: {url}  (режим: {state['backend'].kind})")
-    app.run(host="127.0.0.1", port=args.port, threaded=True)
+    if already_running(args.port):
+        open_window()
+        return
+
+    if args.demo:
+        state["phase"] = "demo"
+    else:
+        threading.Thread(target=connect_openrgb, daemon=True).start()
+
+    server = threading.Thread(target=lambda: app.run(host="127.0.0.1", port=args.port, threaded=True),
+                              daemon=True)
+    server.start()
+    print(f"RGB Studio: http://127.0.0.1:{args.port}")
+
+    if args.no_window:
+        try:
+            server.join()
+        except KeyboardInterrupt:
+            pass
+        runtime.stop()
+        return
+    if not args.minimized:
+        threading.Timer(0.8, open_window).start()
+    run_tray()
 
 
 if __name__ == "__main__":

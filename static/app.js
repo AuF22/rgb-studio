@@ -61,8 +61,10 @@ async function loadState(keepSelection) {
   const firstLoad = !st.devices.length;
   Object.assign(st, data);
   const ids = new Set(st.devices.map((d) => d.id));
+  const known = st.knownIds || new Set();
   if (!keepSelection || firstLoad) st.selected = new Set(ids);
-  else st.selected = new Set([...st.selected].filter((i) => ids.has(i)));
+  else st.selected = new Set([...st.selected].filter((i) => ids.has(i)).concat([...ids].filter((i) => !known.has(i))));
+  st.knownIds = ids;
   syncUiFromSelection();
   renderAll();
 }
@@ -87,30 +89,94 @@ function renderAll() {
   renderProfiles();
 }
 
+const bannerHidden = new Set();
+
+function bannerFor(s) {
+  const e = s.engine || {};
+  if (s.phase === "starting") return { kind: "info", key: "starting", text: "Запускаю движок подсветки и ищу устройства… Это занимает до 20 секунд." };
+  if (s.mode === "demo") {
+    if (s.error) return { kind: "err", key: "fail", text: `Движок подсветки не запустился: ${s.error}. Показаны демо-устройства.`, action: "Повторить", run: reconnect };
+    return { kind: "", key: "demo", text: "Демо-режим: устройства виртуальные, подсветка компьютера не меняется.", action: "Подключить устройства", run: reconnect };
+  }
+  if (!e.admin) return { kind: "", key: "admin", text: "Оперативная память и часть устройств видны только с правами администратора.", action: "Перезапустить от администратора", run: elevate };
+  if (!e.pawnio && e.pawnio_setup) return { kind: "", key: "pawnio", text: "Для управления памятью и материнской платой нужен драйвер PawnIO (ставится один раз).", action: "Установить драйвер", run: installPawnio };
+  if (s.error) return { kind: "err", key: "err", text: s.error };
+  return null;
+}
+
 function renderStatus() {
   const s = st.status;
   const pill = $("#statusPill");
-  pill.className = "status-pill " + (s.mode === "openrgb" ? "ok" : "demo");
-  $("#statusText").textContent = s.mode === "openrgb" ? `OpenRGB · ${s.host}:${s.port}` : "Демо-режим";
+  const ext = s.engine && s.engine.state === "external";
+  pill.className = "status-pill " + (s.phase === "starting" ? "starting" : s.mode === "openrgb" ? "ok" : "demo");
+  $("#statusText").textContent =
+    s.phase === "starting" ? "Поиск устройств…" :
+    s.mode === "openrgb" ? `${ext ? "OpenRGB" : "Подключено"} · устройств: ${st.devices.length}` : "Демо-режим";
+
   const banner = $("#banner");
-  if (s.mode !== "openrgb") {
+  const b = bannerFor(s);
+  if (!b || bannerHidden.has(b.key)) { banner.hidden = true; }
+  else {
     banner.hidden = false;
-    $("#bannerText").textContent = s.error
-      ? "OpenRGB не найден — показаны демо-устройства. Запустите OpenRGB и включите SDK Server."
-      : "Демо-режим: устройства виртуальные, подсветка компьютера не меняется.";
-  } else {
-    banner.hidden = !s.error;
-    $("#bannerText").textContent = s.error || "";
+    banner.className = "banner " + b.kind;
+    $("#bannerText").textContent = b.text;
+    const btn = $("#bannerAction");
+    btn.hidden = !b.action;
+    btn.textContent = b.action || "";
+    btn.onclick = b.run || null;
+    $("#bannerClose").onclick = () => { bannerHidden.add(b.key); banner.hidden = true; };
   }
   $("#masterBrightness").value = st.settings.brightness;
   $("#masterValue").textContent = st.settings.brightness + "%";
+  renderEngineInfo();
+}
+
+function renderEngineInfo() {
+  const e = st.status.engine || {};
+  const yes = (v, good, bad) => `<b class="${v ? "good" : "bad"}">${v ? good : bad}</b>`;
+  const engineText = { running: "работает (встроенный)", external: "внешний OpenRGB", starting: "запускается…",
+    missing: "не найден", failed: "ошибка", idle: "остановлен" }[e.state] || "—";
+  $("#engineInfo").innerHTML = `
+    <span>Движок</span>${yes(["running", "external"].includes(e.state), engineText, engineText)}
+    <span>Устройств найдено</span><b>${st.status.mode === "openrgb" ? st.devices.length : 0}</b>
+    <span>Права администратора</span>${yes(e.admin, "есть", "нет")}
+    <span>Драйвер памяти/платы (PawnIO)</span>${yes(e.pawnio, "установлен", "не установлен")}`;
+}
+
+async function reconnect() {
+  st.status.phase = "starting"; renderStatus();
+  try {
+    const r = await api("/api/connect", {});
+    await loadState(false);
+    if (r.ok) toast(`Готово: найдено устройств — ${st.devices.length}`, "ok");
+    else toast(r.status.error || "Не удалось запустить движок", "err");
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function elevate() {
+  try {
+    await api("/api/elevate", {});
+    toast("Перезапускаю с правами администратора…");
+    setTimeout(() => window.close(), 800);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function installPawnio() {
+  toast("Устанавливаю драйвер PawnIO — подтвердите запрос Windows…");
+  try {
+    const r = await api("/api/pawnio/install", {});
+    toast(r.reboot ? "Драйвер установлен. Перезагрузите компьютер, чтобы он заработал." : "Драйвер установлен, перезапускаю движок…", "ok");
+    setTimeout(() => loadState(false), 1500);
+  } catch (e) { toast(e.message, "err"); }
 }
 
 function renderDevices() {
   const list = $("#deviceList");
   list.innerHTML = "";
   if (!st.devices.length) {
-    list.append(el("div", "empty", "Устройства не найдены. Запустите OpenRGB от имени администратора и нажмите «Пересканировать»."));
+    list.append(el("div", "empty", st.status.phase === "starting"
+      ? "Ищу устройства…"
+      : "Устройства не найдены. Попробуйте «Пересканировать» или перезапустите приложение от имени администратора."));
   }
   for (const d of st.devices) {
     const card = el("div", "device" + (st.selected.has(d.id) ? " selected" : ""));
@@ -152,7 +218,7 @@ function renderPreview() {
     card.innerHTML = `<div class="pv-title"><b>${esc(d.name)}</b><span>${d.leds} LED</span></div>`;
     const zones = el("div", "pv-zones");
     const leds = [];
-    for (const z of d.zones) {
+    d.zones.forEach((z, zi) => {
       const zone = el("div", "pv-zone");
       let box;
       if (d.type === "cooler" && z.leds >= 6) {
@@ -168,16 +234,48 @@ function renderPreview() {
         box = el("div", "leds" + (d.type === "keyboard" && z.leds > 30 ? " kbd" : ""));
         for (let i = 0; i < Math.min(z.leds, 200); i++) { const led = el("div", "led"); box.append(led); leds.push(led); }
       }
-      zone.append(box);
-      if (d.zones.length > 1) zone.append(el("small", "", esc(z.name)));
+      if (z.leds) zone.append(box);
+      if (d.zones.length > 1 || z.resizable) zone.append(el("small", "", esc(z.name)));
+      if (z.resizable) zone.append(zoneSizer(d, z, zi));
       zones.append(zone);
-    }
+    });
     card.append(zones);
     card.onclick = (ev) => toggleDevice(d.id, ev.ctrlKey || ev.metaKey);
     root.append(card);
     st.ledEls[d.id] = leds;
   }
   renderPreviewSelection();
+}
+
+function zoneSizer(d, z, zi) {
+  const wrap = el("div", "sizer");
+  const show = () => {
+    wrap.innerHTML = "";
+    const b = el("button", "sizer-btn" + (z.leds ? "" : " warn"), z.leds ? `${z.leds} LED · изменить` : "Указать число LED");
+    b.title = "Сколько светодиодов в подключённых вентиляторах или ленте";
+    b.onclick = (ev) => { ev.stopPropagation(); edit(); };
+    wrap.append(b);
+  };
+  const edit = () => {
+    wrap.innerHTML = "";
+    const inp = el("input");
+    inp.type = "number"; inp.min = z.min; inp.max = z.max; inp.value = z.leds || 20;
+    const ok = el("button", "sizer-btn", "OK");
+    const save = async () => {
+      try {
+        await api("/api/zone", { device: d.id, zone: zi, size: +inp.value });
+        toast(`«${esc(z.name)}»: ${inp.value} LED`, "ok");
+        await loadState(true);
+      } catch (e) { toast(e.message, "err"); show(); }
+    };
+    inp.onclick = (ev) => ev.stopPropagation();
+    inp.onkeydown = (ev) => { if (ev.key === "Enter") save(); if (ev.key === "Escape") show(); };
+    ok.onclick = (ev) => { ev.stopPropagation(); save(); };
+    wrap.append(inp, ok);
+    inp.focus(); inp.select();
+  };
+  show();
+  return wrap;
 }
 
 function renderPreviewSelection() {
@@ -411,17 +509,17 @@ function wire() {
 
   // settings dialog
   const dlg = $("#settingsDlg");
-  const openSettings = (help) => {
+  const openSettings = async () => {
     $("#hostInput").value = st.settings.host;
     $("#portInput").value = st.settings.port;
-    $("#demoFallback").checked = !!st.settings.demo_fallback;
     renderProfiles();
+    renderEngineInfo();
     dlg.showModal();
-    if (help) { const h = $("#helpSection"); h.scrollIntoView({ behavior: "smooth" }); h.classList.remove("flash"); void h.offsetWidth; h.classList.add("flash"); }
+    try { $("#autostart").checked = (await api("/api/autostart")).enabled; } catch { /* ignore */ }
   };
-  $("#settingsBtn").onclick = () => openSettings(false);
-  $("#statusPill").onclick = () => openSettings(false);
-  $("#bannerAction").onclick = () => openSettings(true);
+  $("#settingsBtn").onclick = openSettings;
+  $("#statusPill").onclick = openSettings;
+  $("#restartEngineBtn").onclick = () => { dlg.close(); reconnect(); };
   $("#connectBtn").onclick = async () => {
     const btn = $("#connectBtn");
     btn.disabled = true; btn.textContent = "Подключаюсь…";
@@ -433,19 +531,26 @@ function wire() {
     } finally { btn.disabled = false; btn.textContent = "Подключиться"; }
   };
   $("#demoBtn").onclick = async () => { await api("/api/connect", { demo: true }); await loadState(false); dlg.close(); toast("Включён демо-режим"); };
-  $("#demoFallback").onchange = (e) => api("/api/settings", { demo_fallback: e.target.checked }).then((r) => st.settings = r.settings);
+  $("#autostart").onchange = async (e) => {
+    try { const r = await api("/api/autostart", { enabled: e.target.checked }); e.target.checked = r.enabled; toast(r.enabled ? "Автозапуск включён" : "Автозапуск выключен", "ok"); }
+    catch (err) { e.target.checked = !e.target.checked; toast(err.message, "err"); }
+  };
   $("#startupProfile").onchange = (e) => api("/api/settings", { startup_profile: e.target.value }).then((r) => { st.settings = r.settings; toast("Сохранено", "ok"); });
 }
 
 wire();
 loadState(false).then(() => {
   // first launch: give the user something alive to look at
-  if (!Object.keys(st.assignments).length && st.status.mode === "demo") applyNow();
+  if (!Object.keys(st.assignments).length && st.status.phase === "demo") applyNow();
   pollFrame();
 }).catch((e) => toast("Сервер недоступен: " + e.message, "err"));
-setInterval(async () => {
+// follow engine start-up and device discovery
+async function pollStatus() {
   try {
-    const d = await api("/api/state");
-    if (JSON.stringify(d.status) !== JSON.stringify(st.status)) { st.status = d.status; renderStatus(); }
-  } catch { /* ignore */ }
-}, 5000);
+    const s = await api("/api/status");
+    if (s.version !== st.status.version) await loadState(true);
+    else if (JSON.stringify(s) !== JSON.stringify(st.status)) { st.status = s; renderStatus(); }
+  } catch { /* server restarting */ }
+  setTimeout(pollStatus, st.status.phase === "starting" ? 700 : 3000);
+}
+setTimeout(pollStatus, 700);

@@ -38,7 +38,8 @@
 
 <div class="banner" id="banner" hidden>
   <span id="bannerText"></span>
-  <button class="btn small" id="bannerAction">Как включить</button>
+  <button class="btn small" id="bannerAction"></button>
+  <button class="banner-close" id="bannerClose" title="Скрыть">✕</button>
 </div>
 
 <main class="layout">
@@ -123,20 +124,25 @@
     </div>
 
     <section>
-      <h3>Подключение к OpenRGB</h3>
-      <div class="field-row">
-        <label class="field"><span>Адрес</span><input id="hostInput" value="127.0.0.1"></label>
-        <label class="field narrow"><span>Порт</span><input id="portInput" type="number" value="6742"></label>
-      </div>
+      <h3>Движок подсветки</h3>
+      <div class="engine-info" id="engineInfo"></div>
       <div class="btn-row">
-        <button type="button" class="btn primary" id="connectBtn">Подключиться</button>
+        <button type="button" class="btn primary" id="restartEngineBtn">Перезапустить движок</button>
         <button type="button" class="btn ghost" id="demoBtn">Демо-режим</button>
       </div>
-      <label class="toggle"><input type="checkbox" id="demoFallback"><span class="switch"></span> Переходить в демо, если OpenRGB недоступен</label>
+      <details class="advanced">
+        <summary>Подключиться к другому OpenRGB</summary>
+        <div class="field-row">
+          <label class="field"><span>Адрес</span><input id="hostInput" value="127.0.0.1"></label>
+          <label class="field narrow"><span>Порт</span><input id="portInput" type="number" value="6742"></label>
+        </div>
+        <button type="button" class="btn ghost" id="connectBtn">Подключиться</button>
+      </details>
     </section>
 
     <section>
       <h3>Запуск</h3>
+      <label class="toggle"><input type="checkbox" id="autostart"><span class="switch"></span> Запускать вместе с Windows (в трей)</label>
       <label class="field"><span>Профиль при запуске</span>
         <select id="startupProfile"><option value="">Не загружать</option></select>
       </label>
@@ -147,15 +153,11 @@
       <div class="profile-manage" id="profileManage"></div>
     </section>
 
-    <section class="help" id="helpSection">
-      <h3>Как подключить OpenRGB</h3>
-      <ol>
-        <li>Скачайте и установите OpenRGB с <b>openrgb.org</b>.</li>
-        <li>Запустите OpenRGB <b>от имени администратора</b> — так он увидит все устройства.</li>
-        <li>Откройте вкладку <b>SDK Server</b> и нажмите <b>Start Server</b> (порт 6742).</li>
-        <li>Чтобы не делать это каждый раз: <b>Settings → Start at login</b> и <b>Start server</b>, плюс «Start minimized».</li>
-        <li>Вернитесь сюда и нажмите <b>Подключиться</b>.</li>
-      </ol>
+    <section class="about">
+      <h3>О программе</h3>
+      <p>RGB Studio управляет подсветкой через встроенный движок <b>OpenRGB</b> (GPL-2.0, openrgb.org) —
+      отдельно ничего устанавливать не нужно. Закрытие окна не выключает подсветку: приложение продолжает
+      работать в трее, выйти можно через значок у часов.</p>
     </section>
   </form>
 </dialog>

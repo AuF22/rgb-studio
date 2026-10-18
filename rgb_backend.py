@@ -73,6 +73,21 @@ class DemoBackend(BaseBackend):
         self.devices[dev_id]["active_mode"] = "Direct"
 
 
+def _patch_zone_limits():
+    """openrgb-python drops a zone's min/max LED count; keep them so the UI can offer resizing."""
+    from openrgb import orgb
+    if getattr(orgb.Zone, "_rgbstudio_patched", False):
+        return
+    original = orgb.Zone._update
+
+    def _update(self, data):
+        original(self, data)
+        self.leds_min, self.leds_max = data.leds_min, data.leds_max
+
+    orgb.Zone._update = _update
+    orgb.Zone._rgbstudio_patched = True
+
+
 class OpenRGBBackend(BaseBackend):
     kind = "openrgb"
 
@@ -80,6 +95,7 @@ class OpenRGBBackend(BaseBackend):
         super().__init__()
         from openrgb import OpenRGBClient  # imported lazily so demo works without the package
         from openrgb.utils import RGBColor
+        _patch_zone_limits()
         self._RGBColor = RGBColor
         self.host, self.port = host, port
         self.client = OpenRGBClient(host, port, "RGB Studio")
@@ -95,10 +111,23 @@ class OpenRGBBackend(BaseBackend):
                 "id": dev.id, "name": dev.name,
                 "type": DEVICE_TYPES.get(int(dev.type), "accessory"),
                 "vendor": (getattr(dev.metadata, "vendor", "") or "") if getattr(dev, "metadata", None) else "",
-                "zones": [{"name": z.name, "leds": len(z.leds)} for z in dev.zones],
+                "zones": [self._zone_info(z) for z in dev.zones],
                 "leds": len(dev.leds), "modes": modes, "active_mode": active,
             })
             self.frame[dev.id] = [(c.red, c.green, c.blue) for c in dev.colors]
+
+    @staticmethod
+    def _zone_info(z):
+        lo, hi = getattr(z, "leds_min", 0), getattr(z, "leds_max", 0)
+        return {"name": z.name, "leds": len(z.leds), "resizable": hi > lo, "min": lo, "max": hi}
+
+    def resize_zone(self, dev_id, zone_idx, size):
+        zone = self._dev(dev_id).zones[zone_idx]
+        size = max(zone.leds_min, min(zone.leds_max, int(size)))
+        with self.lock:
+            zone.resize(size)
+        self.rescan()
+        return size
 
     def rescan(self):
         with self.lock:

@@ -1,2 +1,4 @@
 flask>=3.0
 openrgb-python>=0.3
+pystray>=0.19
+pillow>=10
